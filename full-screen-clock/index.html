@@ -141,23 +141,39 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      function roundedScreenPath(w, h, r) {
+      /*
+        Continuous screen curve:
+        - exactly horizontal at top/bottom midpoint
+        - exactly vertical at left/right midpoint
+        - gradually bends and tilts over the whole trip toward each corner
+        - no sudden "straight edge -> round corner" transition
+      */
+      function squircleScreenPath(w, h) {
         var cx = w / 2;
+        var cy = h / 2;
+        var a = w / 2;
+        var b = h / 2;
 
-        /* Start at exact top center: this is the 00-second position. */
-        return [
-          'M', cx, 0,
-          'H', w - r,
-          'Q', w, 0, w, r,
-          'V', h - r,
-          'Q', w, h, w - r, h,
-          'H', r,
-          'Q', 0, h, 0, h - r,
-          'V', r,
-          'Q', 0, 0, r, 0,
-          'H', cx,
-          'Z'
-        ].join(' ');
+        /* Higher = flatter centers and tighter corners. */
+        var n = 4.4;
+        var power = 2 / n;
+        var samples = 720;
+        var parts = [];
+
+        /* Start at top center so 00 seconds stays at the top middle. */
+        for (var i = 0; i <= samples; i++) {
+          var t = -Math.PI / 2 + (Math.PI * 2 * i / samples);
+          var c = Math.cos(t);
+          var s = Math.sin(t);
+
+          var x = cx + a * Math.sign(c) * Math.pow(Math.abs(c), power);
+          var y = cy + b * Math.sign(s) * Math.pow(Math.abs(s), power);
+
+          parts.push((i === 0 ? 'M ' : 'L ') + x.toFixed(3) + ' ' + y.toFixed(3));
+        }
+
+        parts.push('Z');
+        return parts.join(' ');
       }
 
       function setupPath() {
@@ -165,25 +181,15 @@
         var h = window.innerHeight;
 
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-
-        /*
-          The path runs directly on the viewport edge.
-          Because the stroke is 40px thick, exactly half of the
-          conceptual 40×40 block sits outside the screen on straight edges.
-          At corners, the same block becomes a genuine curved arc.
-        */
-        var radius = Math.max(
-          56,
-          Math.min(86, Math.min(w, h) * 0.085)
-        );
-
-        secondPath.setAttribute('d', roundedScreenPath(w, h, radius));
+        secondPath.setAttribute('d', squircleScreenPath(w, h));
 
         totalLength = secondPath.getTotalLength();
 
         /*
-          One 40px dash around one closed perimeter.
-          Pattern length equals the perimeter so 59 → 00 stays continuous.
+          40px long × 40px thick at the edge midpoints.
+          Because the centerline runs on the viewport boundary,
+          half of it is naturally clipped offscreen.
+          The dash itself bends as the squircle bends.
         */
         secondPath.style.strokeDasharray =
           blockSize + ' ' + (totalLength - blockSize);
