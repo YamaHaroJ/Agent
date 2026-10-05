@@ -1106,9 +1106,12 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // Enumerate every registered Now Playing client, resolve each client's
-        // player, then request metadata with includeArtwork=true. This is the
-        // exact per-player call chain used by working MediaRemote adapters.
+        // Match Apple's own accessory Now Playing path first:
+        // local origin -> client for origin -> client info with artwork.
+        if tryOriginSpecificNowPlayingClient() {
+            return
+        }
+
         if tryEnumeratedNowPlayingClients() {
             return
         }
