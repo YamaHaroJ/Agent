@@ -47,8 +47,16 @@ if [[ ! -d "$PROJECT" ]]; then
 fi
 
 echo "1/5 Replacing native source with the fixed GitHub-direct loader..." | tee -a "$LOG"
-curl -fsSL "$REMOTE_BASE/ContentView.swift" -o "$SOURCE_DIR/ContentView.swift"
-curl -fsSL "$REMOTE_BASE/ClockApp.swift" -o "$SOURCE_DIR/ClockApp.swift"
+CACHE_BUST="$(date +%s)"
+curl -fsSL "$REMOTE_BASE/ContentView.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ContentView.swift"
+curl -fsSL "$REMOTE_BASE/ClockApp.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ClockApp.swift"
+
+if ! grep -q "ART DEBUG" "$SOURCE_DIR/ContentView.swift"; then
+  echo "ERROR: Latest diagnostic source was not downloaded; refusing to build stale code." | tee -a "$LOG"
+  exit 1
+fi
+
+echo "Confirmed latest diagnostic source is present." | tee -a "$LOG"
 
 if grep -q "raw.githack.com" "$SOURCE_DIR/ContentView.swift"; then
   echo "ERROR: old raw.githack loader is still present." | tee -a "$LOG"
