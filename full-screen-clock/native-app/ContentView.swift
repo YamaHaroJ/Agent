@@ -40,6 +40,11 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
     private var mediaRemoteGetNowPlayingInfoWithArtwork: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork?
     private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
+    private var mediaRemoteSetWantsNotifications: MRMediaRemoteSetWantsNowPlayingNotifications?
+    private var mediaRemoteGetActiveOrigin: MRMediaRemoteGetOrigin?
+    private var mediaRemoteGetActivePlayerPathsForOrigin: MRMediaRemoteGetObjectsForOrigin?
+    private var mediaRemoteGetNowPlayingInfoForPlayer: MRMediaRemoteGetNowPlayingInfoForPlayer?
+    private var mediaRemoteCopyArtworkData: MRNowPlayingArtworkCopyImageData?
     private var artworkTimer: Timer?
     private var lastArtworkData: Data?
     private var lastArtworkLookupKey: String?
@@ -64,6 +69,33 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
     private typealias MRMediaRemoteRegisterForNowPlayingNotifications =
         @convention(c) (DispatchQueue) -> Void
+
+    private typealias MRMediaRemoteSetWantsNowPlayingNotifications =
+        @convention(c) (Bool) -> Void
+
+    private typealias MRMediaRemoteGetOrigin =
+        @convention(c) (
+            DispatchQueue,
+            @escaping @convention(block) (Bool, AnyObject?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetObjectsForOrigin =
+        @convention(c) (
+            AnyObject,
+            DispatchQueue,
+            @escaping @convention(block) (NSArray?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingInfoForPlayer =
+        @convention(c) (
+            AnyObject,
+            Bool,
+            DispatchQueue,
+            @escaping @convention(block) (NSDictionary?, UnsafeRawPointer?) -> Void
+        ) -> Void
+
+    private typealias MRNowPlayingArtworkCopyImageData =
+        @convention(c) (UnsafeRawPointer) -> Unmanaged<CFData>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -272,6 +304,65 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
             mediaRemoteRegisterForNotifications?(DispatchQueue.main)
         }
+
+        if let wantsSymbol = dlsym(
+            handle,
+            "MRMediaRemoteSetWantsNowPlayingNotifications"
+        ) {
+            mediaRemoteSetWantsNotifications = unsafeBitCast(
+                wantsSymbol,
+                to: MRMediaRemoteSetWantsNowPlayingNotifications.self
+            )
+            mediaRemoteSetWantsNotifications?(true)
+        }
+
+        if let activeOriginSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetActiveOrigin"
+        ) {
+            mediaRemoteGetActiveOrigin = unsafeBitCast(
+                activeOriginSymbol,
+                to: MRMediaRemoteGetOrigin.self
+            )
+        }
+
+        if let playerPathsSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetActivePlayerPathsForOrigin"
+        ) {
+            mediaRemoteGetActivePlayerPathsForOrigin = unsafeBitCast(
+                playerPathsSymbol,
+                to: MRMediaRemoteGetObjectsForOrigin.self
+            )
+        }
+
+        if let playerInfoSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingInfoForPlayer"
+        ) {
+            mediaRemoteGetNowPlayingInfoForPlayer = unsafeBitCast(
+                playerInfoSymbol,
+                to: MRMediaRemoteGetNowPlayingInfoForPlayer.self
+            )
+        }
+
+        if let artworkCopySymbol = dlsym(
+            handle,
+            "MRNowPlayingArtworkCopyImageData"
+        ) {
+            mediaRemoteCopyArtworkData = unsafeBitCast(
+                artworkCopySymbol,
+                to: MRNowPlayingArtworkCopyImageData.self
+            )
+        }
+
+        setArtworkDebug(
+            "MediaRemote loaded\n" +
+            "global info: \(mediaRemoteGetNowPlayingInfo != nil)\n" +
+            "active origin: \(mediaRemoteGetActiveOrigin != nil)\n" +
+            "player paths: \(mediaRemoteGetActivePlayerPathsForOrigin != nil)\n" +
+            "player info: \(mediaRemoteGetNowPlayingInfoForPlayer != nil)"
+        )
     }
 
     private func startArtworkUpdates() {
@@ -286,10 +377,97 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // iPadOS 26 exposes artwork separately from the legacy now-playing
-        // dictionary on some players. Apple itself uses this four-argument
-        // MediaRemote call with the first two parameters nil for the current
-        // system player.
+        // First try the active-origin/player-path route used by modern
+        // MediaRemote. The legacy global info API can return an empty
+        // dictionary even while Control Center has full metadata.
+        if tryArtworkFromActivePlayerPath() {
+            return
+        }
+
+        refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryArtworkFromActivePlayerPath() -> Bool {
+        guard
+            let getActiveOrigin = mediaRemoteGetActiveOrigin,
+            let getPlayerPaths = mediaRemoteGetActivePlayerPathsForOrigin,
+            let getPlayerInfo = mediaRemoteGetNowPlayingInfoForPlayer
+        else {
+            return false
+        }
+
+        getActiveOrigin(DispatchQueue.main) { [weak self] success, origin in
+            guard let self else { return }
+
+            guard success, let origin else {
+                self.setArtworkDebug("Active origin unavailable")
+                self.refreshArtworkFromLegacyAPIs()
+                return
+            }
+
+            getPlayerPaths(origin, DispatchQueue.main) { [weak self] paths in
+                guard let self else { return }
+
+                guard
+                    let paths,
+                    let playerPath = paths.firstObject as AnyObject?
+                else {
+                    self.setArtworkDebug("Active origin found, but no active player path")
+                    self.refreshArtworkFromLegacyAPIs()
+                    return
+                }
+
+                getPlayerInfo(
+                    playerPath,
+                    true,
+                    DispatchQueue.main
+                ) { [weak self] infoObject, artworkObject in
+                    guard let self else { return }
+
+                    let info = infoObject as? [String: Any] ?? [:]
+                    let title =
+                        info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+                        ?? "<nil>"
+                    let artist =
+                        info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+                        ?? "<nil>"
+
+                    var artworkData =
+                        info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+
+                    if artworkData == nil,
+                       let artworkObject,
+                       let copied =
+                            self.mediaRemoteCopyArtworkData?(artworkObject) {
+                        artworkData = copied.takeRetainedValue() as Data
+                    }
+
+                    self.setArtworkDebug(
+                        "PLAYER PATH CALLBACK\n" +
+                        "paths: \(paths.count)\n" +
+                        "keys: \(info.count)\n" +
+                        "title: \(title)\n" +
+                        "artist: \(artist)\n" +
+                        "artwork bytes: \(artworkData?.count ?? 0)"
+                    )
+
+                    if let artworkData,
+                       let image = UIImage(data: artworkData) {
+                        self.lastArtworkLookupKey = nil
+                        self.setArtwork(image, data: artworkData)
+                        return
+                    }
+
+                    self.processArtworkMetadataFallback(info)
+                }
+            }
+        }
+
+        return true
+    }
+
+    private func refreshArtworkFromLegacyAPIs() {
         if let getNowPlayingInfoWithArtwork =
             mediaRemoteGetNowPlayingInfoWithArtwork {
             getNowPlayingInfoWithArtwork(
@@ -300,16 +478,6 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 guard let self else { return }
 
                 let info = infoObject as? [String: Any] ?? [:]
-                let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String ?? "<nil>"
-                let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? "<nil>"
-                let artBytes = (artworkObject as Data?)?.count ?? 0
-                self.setArtworkDebug(
-                    "optional callback fired\n" +
-                    "keys: \(info.count)\n" +
-                    "title: \(title)\n" +
-                    "artist: \(artist)\n" +
-                    "separate artwork bytes: \(artBytes)"
-                )
 
                 if let data = artworkObject as Data?,
                    let image = UIImage(data: data) {
@@ -332,18 +500,11 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         guard let getNowPlayingInfo = mediaRemoteGetNowPlayingInfo else {
+            setArtworkDebug("No usable MediaRemote metadata reader")
             return
         }
 
         getNowPlayingInfo(DispatchQueue.main) { [weak self] info in
-            let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String ?? "<nil>"
-            let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? "<nil>"
-            self?.setArtworkDebug(
-                "legacy callback fired\n" +
-                "keys: \(info.count)\n" +
-                "title: \(title)\n" +
-                "artist: \(artist)"
-            )
             self?.processArtworkMetadataFallback(info)
         }
     }
