@@ -30,7 +30,7 @@ PROJECT_ROOT="$HOME/Documents/Clock"
 PROJECT="$PROJECT_ROOT/Clock.xcodeproj"
 SOURCE_DIR="$PROJECT_ROOT/Clock"
 BUILD_DIR="$HOME/Library/Caches/ClockNativeBuild"
-DEVICE_NAME="Jay's iPad"
+DEVICE_NAME="Jay’s iPad"
 DEVICE_ID=""
 BUNDLE_ID="com.jayden.Clock"
 LOG="$HOME/Library/Logs/ClockNativeInstall.log"
@@ -68,18 +68,11 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-DEVICE_ID="$(xcrun devicectl list devices 2>/dev/null | grep -F "$DEVICE_NAME" | grep -Eo '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}' | head -n 1 || true)"
-
-if [[ -z "$DEVICE_ID" ]]; then
-  echo "ERROR: $DEVICE_NAME is not currently visible to devicectl." | tee -a "$LOG"
-  exit 1
-fi
-
-echo "4/5 Installing Clock on $DEVICE_NAME ($DEVICE_ID)..." | tee -a "$LOG"
-xcrun devicectl device install app --device "$DEVICE_ID" "$APP_PATH" 2>&1 | tee -a "$LOG"
+echo "4/5 Installing Clock on $DEVICE_NAME..." | tee -a "$LOG"
+xcrun devicectl device install app --device "$DEVICE_NAME" "$APP_PATH" 2>&1 | tee -a "$LOG"
 
 echo "5/5 Launching Clock..." | tee -a "$LOG"
-xcrun devicectl device process launch --device "$DEVICE_ID" "$BUNDLE_ID" 2>&1 | tee -a "$LOG" || true
+xcrun devicectl device process launch --device "$DEVICE_NAME" "$BUNDLE_ID" 2>&1 | tee -a "$LOG" || true
 
 echo
 echo "✅ Fixed source, cleaned, rebuilt, installed, and launched Clock."
