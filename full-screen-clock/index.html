@@ -47,21 +47,13 @@
       pointer-events: none;
     }
 
-    #track {
-      fill: none;
-      stroke: rgba(255,255,255,.10);
-      stroke-width: 10;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
-
     #second-path {
       fill: none;
-      stroke: rgba(255,255,255,.98);
-      stroke-width: 18;
-      stroke-linecap: round;
+      stroke: #fff;
+      stroke-width: 40;
+      stroke-linecap: butt;
       stroke-linejoin: round;
-      filter: drop-shadow(0 0 10px rgba(255,255,255,.18));
+      pointer-events: none;
     }
 
     #clock {
@@ -115,7 +107,6 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <path id="track"></path>
       <path id="second-path"></path>
     </svg>
 
@@ -128,7 +119,6 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var track = document.getElementById('track');
       var secondPath = document.getElementById('second-path');
 
       var totalLength = 0;
@@ -163,23 +153,37 @@
         var h = window.innerHeight;
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
-        var inset = 11;
-        var radius = Math.max(28, Math.min(48, Math.min(w, h) * 0.055));
-        var d = roundedRectPath(inset, inset, w - inset * 2, h - inset * 2, radius);
+        var blockThickness = 40;
+        var inset = blockThickness / 2;
+        var radius = Math.max(38, Math.min(64, Math.min(w, h) * 0.07));
+        var d = roundedRectPath(
+          inset,
+          inset,
+          w - inset * 2,
+          h - inset * 2,
+          radius
+        );
 
-        track.setAttribute('d', d);
         secondPath.setAttribute('d', d);
 
         totalLength = secondPath.getTotalLength();
-        segmentLength = Math.max(90, Math.min(180, totalLength * 0.075));
-        secondPath.style.strokeDasharray = segmentLength + ' ' + totalLength;
+
+        /* Solid block length along the border */
+        segmentLength = Math.max(92, Math.min(145, totalLength * 0.055));
+
+        /* One solid dash + one huge gap = one moving block */
+        secondPath.style.strokeDasharray =
+          segmentLength + ' ' + (totalLength + segmentLength);
       }
 
       function setSegment(d) {
         if (!totalLength) return;
+
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var progress = seconds / 60;
-        secondPath.style.strokeDashoffset = String(totalLength - (progress * totalLength));
+
+        secondPath.style.strokeDashoffset =
+          String(-(progress * totalLength));
       }
 
       function update() {
