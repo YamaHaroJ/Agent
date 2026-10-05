@@ -277,186 +277,93 @@
         return null;
       }
 
-      function drawSecondBlock(d) {
-        if (!totalLength) return;
-
-        var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var start = (seconds / 60) * totalLength;
-        var midDistance = start + blockLength / 2;
-
+      function pointOnInsetRectangleFromCenter(source, inset) {
         var w = window.innerWidth;
         var h = window.innerHeight;
         var cx = w / 2;
         var cy = h / 2;
 
-        /*
-          Keep the long exaggerated n=2.6 motion.
-          The moving point on the guide curve determines where the marker is.
-        */
-        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
+        var dx = source.x - cx;
+        var dy = source.y - cy;
+
+        var halfW = Math.max(1, w / 2 - inset);
+        var halfH = Math.max(1, h / 2 - inset);
+
+        var sx = Math.abs(dx) > 0.000001 ? halfW / Math.abs(dx) : Infinity;
+        var sy = Math.abs(dy) > 0.000001 ? halfH / Math.abs(dy) : Infinity;
+        var scale = Math.min(sx, sy);
+
+        return {
+          x: cx + dx * scale,
+          y: cy + dy * scale
+        };
+      }
+
+      function drawSecondBlock(d) {
+        if (!totalLength) return;
+
+        var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
+        var start = (seconds / 60) * totalLength;
 
         /*
-          Project that moving point outward to the real rectangular
-          screen boundary so the marker stays pinned to the physical edge.
+          FLOWING RIBBON:
+          Every point across the marker is mapped independently.
+
+          - outer boundary follows the physical screen edge
+          - inner boundary follows the same edge shape, just inset 40px
+          - both boundaries warp together through corners
+          - no rigid square, no center-point rotation, no triangle collapse
         */
-        var rx = mid.x - cx;
-        var ry = mid.y - cy;
+        var samples = 28;
+        var outer = [];
+        var inner = [];
 
-        var sx = Math.abs(rx) > 0.0001 ? (w / 2) / Math.abs(rx) : Infinity;
-        var sy = Math.abs(ry) > 0.0001 ? (h / 2) / Math.abs(ry) : Infinity;
-        var scaleToEdge = Math.min(sx, sy);
+        for (var i = 0; i <= samples; i++) {
+          var t = i / samples;
+          var distance = start + blockLength * t;
 
-        var edgeX = cx + rx * scaleToEdge;
-        var edgeY = cy + ry * scaleToEdge;
+          /*
+            The n=2.6 squircle guide is still what controls the long,
+            exaggerated bend/timing that you liked.
+          */
+          var guide = guidePath.getPointAtLength(wrapLength(distance));
 
-        /*
-          NEW ORIENTATION RULE:
+          /*
+            Project EACH sample independently to the real screen edge.
+            This is what makes the whole marker warp instead of merely rotate.
+          */
+          outer.push(
+            pointOnInsetRectangleFromCenter(guide, 0)
+          );
 
-          Do NOT point toward the exact screen center.
-
-          Instead, use a second point that follows the marker just inside
-          the perimeter. That point moves with the second marker, so the
-          fixed inner edge stays parallel to the local edge/curve instead
-          of aiming radially at one central point.
-        */
-        var local = pointAndInwardNormal(midDistance);
-
-        var inwardX = local.nx;
-        var inwardY = local.ny;
-
-        /*
-          Ensure the normal really points into the screen.
-        */
-        var testX = edgeX + inwardX * 4;
-        var testY = edgeY + inwardY * 4;
-
-        if (
-          testX < 0 || testX > w ||
-          testY < 0 || testY > h
-        ) {
-          inwardX *= -1;
-          inwardY *= -1;
-        }
-
-        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
-        inwardX /= inwardMag;
-        inwardY /= inwardMag;
-
-        /*
-          The fixed edge is perpendicular to the moving inward direction,
-          so it stays parallel to the nearby screen edge.
-        */
-        var tangentX = -inwardY;
-        var tangentY = inwardX;
-
-        var half = blockLength / 2;
-        var margin = 0.5;
-
-        function innerEdgeAt(depth) {
-          var icx = edgeX + inwardX * depth;
-          var icy = edgeY + inwardY * depth;
-
-          return {
-            a: {
-              x: icx - tangentX * half,
-              y: icy - tangentY * half
-            },
-            b: {
-              x: icx + tangentX * half,
-              y: icy + tangentY * half
-            }
-          };
-        }
-
-        function fullyInside(edge) {
-          return (
-            edge.a.x >= margin &&
-            edge.a.x <= w - margin &&
-            edge.a.y >= margin &&
-            edge.a.y <= h - margin &&
-            edge.b.x >= margin &&
-            edge.b.x <= w - margin &&
-            edge.b.y >= margin &&
-            edge.b.y <= h - margin
+          /*
+            The inside edge follows the same moving perimeter too,
+            just 40px inward. It bends and flows with the outside edge.
+          */
+          inner.push(
+            pointOnInsetRectangleFromCenter(guide, blockThickness)
           );
         }
 
-        /*
-          Keep the inner edge exactly 40px whenever possible.
-          Near a corner, move that unchanged edge farther inward only
-          enough to keep all 40px visible.
-        */
-        /*
-          Keep the fixed 40px inner edge much closer to the perimeter.
-          Only about half of the original 40px depth is visible on the
-          straight edges, matching the edge-hugging look more closely.
-        */
-        var preferredDepth = blockThickness * 0.5;
-        var innerDepth = preferredDepth;
-        var fixedEdge = innerEdgeAt(innerDepth);
-
-        if (!fullyInside(fixedEdge)) {
-          var low = preferredDepth;
-          var high = Math.hypot(w, h);
-
-          for (var n = 0; n < 16; n++) {
-            var testDepth = (low + high) / 2;
-            var testEdge = innerEdgeAt(testDepth);
-
-            if (fullyInside(testEdge)) {
-              high = testDepth;
-            } else {
-              low = testDepth;
-            }
-          }
-
-          innerDepth = high;
-          fixedEdge = innerEdgeAt(innerDepth);
-        }
-
-        var innerA = fixedEdge.a;
-        var innerB = fixedEdge.b;
-
-        /*
-          The other two sides stretch outward to the real screen edge.
-        */
-        var outerA = hitBoundaryFromInside(
-          innerA, -inwardX, -inwardY, w, h
-        );
-
-        var outerB = hitBoundaryFromInside(
-          innerB, -inwardX, -inwardY, w, h
-        );
-
-        var parts = [
-          'M ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3),
-          'L ' + outerA.x.toFixed(3) + ' ' + outerA.y.toFixed(3)
-        ];
-
-        /*
-          If those sides land on adjacent physical edges, bend only the
-          OUTER edge around the shared corner. The inner 40px edge remains
-          straight and unchanged.
-        */
-        var corner = sharedCorner(outerA.edge, outerB.edge, w, h);
-
-        if (corner) {
-          parts.push(
-            'Q ' +
-            corner.x.toFixed(3) + ' ' + corner.y.toFixed(3) + ' ' +
-            outerB.x.toFixed(3) + ' ' + outerB.y.toFixed(3)
-          );
-        } else {
-          parts.push(
-            'L ' + outerB.x.toFixed(3) + ' ' + outerB.y.toFixed(3)
-          );
-        }
+        var parts = [];
 
         parts.push(
-          'L ' + innerB.x.toFixed(3) + ' ' + innerB.y.toFixed(3),
-          'L ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3),
-          'Z'
+          'M ' + outer[0].x.toFixed(3) + ' ' + outer[0].y.toFixed(3)
         );
+
+        for (var j = 1; j < outer.length; j++) {
+          parts.push(
+            'L ' + outer[j].x.toFixed(3) + ' ' + outer[j].y.toFixed(3)
+          );
+        }
+
+        for (var k = inner.length - 1; k >= 0; k--) {
+          parts.push(
+            'L ' + inner[k].x.toFixed(3) + ' ' + inner[k].y.toFixed(3)
+          );
+        }
+
+        parts.push('Z');
 
         secondBlock.setAttribute('d', parts.join(' '));
       }
