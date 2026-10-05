@@ -28,7 +28,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var errorLabel: UILabel!
 
     private var mediaControls: UIVisualEffectView!
+    private var previousButton: UIButton!
     private var playPauseButton: UIButton!
+    private var nextButton: UIButton!
     private var volumeView: MPVolumeView!
 
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
@@ -147,21 +149,35 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             effect: UIBlurEffect(style: .systemThinMaterialDark)
         )
         mediaControls.translatesAutoresizingMaskIntoConstraints = false
-        mediaControls.layer.cornerRadius = 26
+        mediaControls.layer.cornerRadius = 28
         mediaControls.clipsToBounds = true
 
-        playPauseButton = UIButton(type: .system)
-        playPauseButton.translatesAutoresizingMaskIntoConstraints = false
-        playPauseButton.tintColor = .white
-        playPauseButton.setImage(
-            UIImage(systemName: "playpause.fill"),
-            for: .normal
+        previousButton = makeMediaButton(
+            systemName: "backward.end.fill",
+            accessibilityLabel: "Previous Track",
+            action: #selector(previousTrack)
         )
-        playPauseButton.addTarget(
-            self,
-            action: #selector(toggleExternalPlayback),
-            for: .touchUpInside
+
+        playPauseButton = makeMediaButton(
+            systemName: "playpause.fill",
+            accessibilityLabel: "Play or Pause",
+            action: #selector(toggleExternalPlayback)
         )
+
+        nextButton = makeMediaButton(
+            systemName: "forward.end.fill",
+            accessibilityLabel: "Next Track",
+            action: #selector(nextTrack)
+        )
+
+        let buttonRow = UIStackView(
+            arrangedSubviews: [previousButton, playPauseButton, nextButton]
+        )
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        buttonRow.axis = .horizontal
+        buttonRow.alignment = .center
+        buttonRow.distribution = .equalCentering
+        buttonRow.spacing = 34
 
         volumeView = MPVolumeView(frame: .zero)
         volumeView.translatesAutoresizingMaskIntoConstraints = false
@@ -169,54 +185,90 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         volumeView.showsRouteButton = false
         volumeView.tintColor = .white
 
-        mediaControls.contentView.addSubview(playPauseButton)
+        mediaControls.contentView.addSubview(buttonRow)
         mediaControls.contentView.addSubview(volumeView)
         view.addSubview(mediaControls)
 
         NSLayoutConstraint.activate([
-            mediaControls.leadingAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
-                constant: 18
+            mediaControls.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            mediaControls.topAnchor.constraint(
+                equalTo: view.centerYAnchor,
+                constant: 125
             ),
-            mediaControls.bottomAnchor.constraint(
-                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
-                constant: -18
-            ),
-            mediaControls.widthAnchor.constraint(equalToConstant: 285),
-            mediaControls.heightAnchor.constraint(equalToConstant: 52),
+            mediaControls.widthAnchor.constraint(equalToConstant: 340),
+            mediaControls.heightAnchor.constraint(equalToConstant: 126),
 
-            playPauseButton.leadingAnchor.constraint(
-                equalTo: mediaControls.contentView.leadingAnchor,
+            buttonRow.topAnchor.constraint(
+                equalTo: mediaControls.contentView.topAnchor,
                 constant: 10
             ),
-            playPauseButton.centerYAnchor.constraint(
-                equalTo: mediaControls.contentView.centerYAnchor
+            buttonRow.centerXAnchor.constraint(
+                equalTo: mediaControls.contentView.centerXAnchor
             ),
-            playPauseButton.widthAnchor.constraint(equalToConstant: 42),
-            playPauseButton.heightAnchor.constraint(equalToConstant: 42),
+            buttonRow.widthAnchor.constraint(equalToConstant: 220),
+            buttonRow.heightAnchor.constraint(equalToConstant: 54),
 
-            volumeView.leadingAnchor.constraint(
-                equalTo: playPauseButton.trailingAnchor,
-                constant: 8
+            previousButton.widthAnchor.constraint(equalToConstant: 50),
+            previousButton.heightAnchor.constraint(equalToConstant: 50),
+            playPauseButton.widthAnchor.constraint(equalToConstant: 54),
+            playPauseButton.heightAnchor.constraint(equalToConstant: 54),
+            nextButton.widthAnchor.constraint(equalToConstant: 50),
+            nextButton.heightAnchor.constraint(equalToConstant: 50),
+
+            volumeView.topAnchor.constraint(
+                equalTo: buttonRow.bottomAnchor,
+                constant: 10
             ),
-            volumeView.trailingAnchor.constraint(
-                equalTo: mediaControls.contentView.trailingAnchor,
-                constant: -14
+            volumeView.centerXAnchor.constraint(
+                equalTo: mediaControls.contentView.centerXAnchor
             ),
-            volumeView.centerYAnchor.constraint(
-                equalTo: mediaControls.contentView.centerYAnchor
-            ),
+            volumeView.widthAnchor.constraint(equalToConstant: 270),
             volumeView.heightAnchor.constraint(equalToConstant: 40)
         ])
     }
 
+    private func makeMediaButton(
+        systemName: String,
+        accessibilityLabel: String,
+        action: Selector
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.tintColor = .white
+        button.setImage(
+            UIImage(
+                systemName: systemName,
+                withConfiguration: UIImage.SymbolConfiguration(
+                    pointSize: 28,
+                    weight: .semibold
+                )
+            ),
+            for: .normal
+        )
+        button.accessibilityLabel = accessibilityLabel
+        button.addTarget(self, action: action, for: .touchUpInside)
+        return button
+    }
+
+    @objc private func previousTrack() {
+        sendMediaCommand(5, button: previousButton)
+    }
+
     @objc private func toggleExternalPlayback() {
+        sendMediaCommand(2, button: playPauseButton)
+    }
+
+    @objc private func nextTrack() {
+        sendMediaCommand(4, button: nextButton)
+    }
+
+    private func sendMediaCommand(_ command: Int32, button: UIButton) {
         guard let sendCommand = mediaRemoteSendCommand else {
             showMediaControlUnavailable()
             return
         }
 
-        let accepted = sendCommand(2, nil)
+        let accepted = sendCommand(command, nil)
 
         guard accepted != 0 else {
             showMediaControlUnavailable()
@@ -226,12 +278,11 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         UIView.animate(
             withDuration: 0.08,
             animations: {
-                self.playPauseButton.transform =
-                    CGAffineTransform(scaleX: 0.82, y: 0.82)
+                button.transform = CGAffineTransform(scaleX: 0.82, y: 0.82)
             },
             completion: { _ in
                 UIView.animate(withDuration: 0.10) {
-                    self.playPauseButton.transform = .identity
+                    button.transform = .identity
                 }
             }
         )
