@@ -449,14 +449,20 @@ final class FullScreenClockViewController:
                     colorsSpace: CGColorSpaceCreateDeviceRGB(),
                     colors: [
                         UIColor(
-                            red: 0.16,
-                            green: 0.18,
+                            red: 0.10,
+                            green: 0.15,
                             blue: 0.20,
+                            alpha: 1
+                        ).cgColor,
+                        UIColor(
+                            red: 0.025,
+                            green: 0.045,
+                            blue: 0.065,
                             alpha: 1
                         ).cgColor,
                         UIColor.black.cgColor
                     ] as CFArray,
-                    locations: [0, 1]
+                    locations: [0, 0.62, 1]
                 )!
 
                 cg.drawLinearGradient(
