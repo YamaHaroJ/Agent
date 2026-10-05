@@ -277,7 +277,7 @@
         return null;
       }
 
-      function pointOnInsetRectangleFromCenter(source, inset) {
+      function pointOnInsetRoundedRectFromCenter(source, inset) {
         var w = window.innerWidth;
         var h = window.innerHeight;
         var cx = w / 2;
@@ -285,17 +285,84 @@
 
         var dx = source.x - cx;
         var dy = source.y - cy;
+        var len = Math.hypot(dx, dy) || 1;
+
+        var ux = dx / len;
+        var uy = dy / len;
+
+        var sx = ux >= 0 ? 1 : -1;
+        var sy = uy >= 0 ? 1 : -1;
+        var ax = Math.abs(ux);
+        var ay = Math.abs(uy);
 
         var halfW = Math.max(1, w / 2 - inset);
         var halfH = Math.max(1, h / 2 - inset);
 
-        var sx = Math.abs(dx) > 0.000001 ? halfW / Math.abs(dx) : Infinity;
-        var sy = Math.abs(dy) > 0.000001 ? halfH / Math.abs(dy) : Infinity;
-        var scale = Math.min(sx, sy);
+        /*
+          Small, iPad-like corner radius.
+          Intentionally subtle so we only smooth the corner cutout
+          without changing the movement or making the screen look pill-shaped.
+        */
+        var screenCornerRadius = 24;
+        var r = Math.max(
+          0,
+          Math.min(screenCornerRadius - inset * 0.15, halfW, halfH)
+        );
+
+        if (r < 0.001) {
+          var rectScaleX = ax > 0.000001 ? halfW / ax : Infinity;
+          var rectScaleY = ay > 0.000001 ? halfH / ay : Infinity;
+          var rectT = Math.min(rectScaleX, rectScaleY);
+
+          return {
+            x: cx + sx * ax * rectT,
+            y: cy + sy * ay * rectT
+          };
+        }
+
+        var sideX = halfW - r;
+        var sideY = halfH - r;
+
+        if (ax > 0.000001) {
+          var tV = halfW / ax;
+          var yV = ay * tV;
+
+          if (yV <= sideY + 0.000001) {
+            return {
+              x: cx + sx * halfW,
+              y: cy + sy * yV
+            };
+          }
+        }
+
+        if (ay > 0.000001) {
+          var tH = halfH / ay;
+          var xH = ax * tH;
+
+          if (xH <= sideX + 0.000001) {
+            return {
+              x: cx + sx * xH,
+              y: cy + sy * halfH
+            };
+          }
+        }
+
+        /*
+          Ray / quarter-circle intersection for the rounded corner.
+          The motion itself is untouched; only the boundary shape changes.
+        */
+        var qa = ax * ax + ay * ay;
+        var qb = -2 * (ax * sideX + ay * sideY);
+        var qc = sideX * sideX + sideY * sideY - r * r;
+        var disc = Math.max(0, qb * qb - 4 * qa * qc);
+
+        var t1 = (-qb - Math.sqrt(disc)) / (2 * qa);
+        var t2 = (-qb + Math.sqrt(disc)) / (2 * qa);
+        var t = Math.max(t1, t2);
 
         return {
-          x: cx + dx * scale,
-          y: cy + dy * scale
+          x: cx + sx * ax * t,
+          y: cy + sy * ay * t
         };
       }
 
@@ -342,11 +409,11 @@
             guidePath.getPointAtLength(wrapLength(innerDistance));
 
           outer.push(
-            pointOnInsetRectangleFromCenter(outerGuide, 0)
+            pointOnInsetRoundedRectFromCenter(outerGuide, 0)
           );
 
           inner.push(
-            pointOnInsetRectangleFromCenter(innerGuide, blockThickness)
+            pointOnInsetRoundedRectFromCenter(innerGuide, blockThickness)
           );
         }
 
