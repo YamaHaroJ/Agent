@@ -41,6 +41,10 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
     private var mediaRemoteGetLocalOrigin: MRMediaRemoteGetLocalOrigin?
     private var mediaRemoteGetNowPlayingArtwork: MRMediaRemoteGetNowPlayingArtwork?
+    private var mediaRemoteGetNowPlayingClient: MRMediaRemoteGetNowPlayingClient?
+    private var mediaRemoteGetInfoForClient: MRMediaRemoteGetNowPlayingInfoForClient?
+    private var mediaRemoteGetAppDisplayID: MRMediaRemoteGetNowPlayingApplicationDisplayID?
+    private var mediaRemoteClientBundleID: MRNowPlayingClientGetBundleIdentifier?
     private var mediaRemoteGetNowPlayingInfoWithArtwork: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork?
     private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
     private var mediaRemoteSetWantsNotifications: MRMediaRemoteSetWantsNowPlayingNotifications?
@@ -76,6 +80,30 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             DispatchQueue,
             @escaping @convention(block) (UnsafeRawPointer?) -> Void
         ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingClient =
+        @convention(c) (
+            DispatchQueue,
+            @escaping @convention(block) (AnyObject?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingInfoForClient =
+        @convention(c) (
+            AnyObject,
+            UnsafeRawPointer?,
+            Bool,
+            DispatchQueue,
+            @escaping @convention(block) (NSDictionary?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingApplicationDisplayID =
+        @convention(c) (
+            DispatchQueue,
+            @escaping @convention(block) (CFString?) -> Void
+        ) -> Void
+
+    private typealias MRNowPlayingClientGetBundleIdentifier =
+        @convention(c) (AnyObject) -> Unmanaged<CFString>?
 
     private typealias MRMediaRemoteGetNowPlayingInfo =
         @convention(c) (
@@ -829,6 +857,46 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let getClientSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingClient"
+        ) {
+            mediaRemoteGetNowPlayingClient = unsafeBitCast(
+                getClientSymbol,
+                to: MRMediaRemoteGetNowPlayingClient.self
+            )
+        }
+
+        if let infoForClientSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingInfoForClient"
+        ) {
+            mediaRemoteGetInfoForClient = unsafeBitCast(
+                infoForClientSymbol,
+                to: MRMediaRemoteGetNowPlayingInfoForClient.self
+            )
+        }
+
+        if let displayIDSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingApplicationDisplayID"
+        ) {
+            mediaRemoteGetAppDisplayID = unsafeBitCast(
+                displayIDSymbol,
+                to: MRMediaRemoteGetNowPlayingApplicationDisplayID.self
+            )
+        }
+
+        if let bundleIDSymbol = dlsym(
+            handle,
+            "MRNowPlayingClientGetBundleIdentifier"
+        ) {
+            mediaRemoteClientBundleID = unsafeBitCast(
+                bundleIDSymbol,
+                to: MRNowPlayingClientGetBundleIdentifier.self
+            )
+        }
+
         if let infoSymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
             mediaRemoteGetNowPlayingInfo = unsafeBitCast(
                 infoSymbol,
@@ -917,6 +985,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         setArtworkDebug(
             "MediaRemote loaded\n" +
             "direct artwork: \(mediaRemoteGetNowPlayingArtwork != nil)\n" +
+            "now-playing client: \(mediaRemoteGetNowPlayingClient != nil)\n" +
+            "client info: \(mediaRemoteGetInfoForClient != nil)\n" +
+            "app display ID: \(mediaRemoteGetAppDisplayID != nil)\n" +
             "local origin: \(mediaRemoteGetLocalOrigin != nil)\n" +
             "global info: \(mediaRemoteGetNowPlayingInfo != nil)\n" +
             "active origin: \(mediaRemoteGetActiveOrigin != nil)\n" +
@@ -937,9 +1008,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // iPadOS 26 still exposes a dedicated artwork request even when the
-        // generic now-playing metadata dictionary is empty. Try that exact
-        // artwork channel first.
+        // Ask MediaRemote for the active client first, then query that client
+        // directly with includeArtwork=true. This can work even when the
+        // global now-playing dictionary is intentionally empty.
+        if tryClientSpecificNowPlaying() {
+            return
+        }
+
         if tryDirectNowPlayingArtwork() {
             return
         }
@@ -957,6 +1032,108 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryClientSpecificNowPlaying() -> Bool {
+        guard
+            let getClient = mediaRemoteGetNowPlayingClient,
+            let getInfoForClient = mediaRemoteGetInfoForClient
+        else {
+            return false
+        }
+
+        getClient(DispatchQueue.main) { [weak self] client in
+            guard let self else { return }
+
+            self.mediaRemoteGetAppDisplayID?(DispatchQueue.main) { displayID in
+                guard self.artworkView.image == nil else { return }
+
+                let displayString =
+                    (displayID as String?) ?? "<nil>"
+
+                guard let client else {
+                    self.setArtworkDebug(
+                        "CLIENT ROUTE\n" +
+                        "active client: NIL\n" +
+                        "display ID: \(displayString)"
+                    )
+                    _ = self.tryDirectNowPlayingArtwork()
+                    return
+                }
+
+                var bundleString = "<unavailable>"
+                if let getBundleID = self.mediaRemoteClientBundleID,
+                   let unmanaged = getBundleID(client) {
+                    bundleString = unmanaged.takeUnretainedValue() as String
+                }
+
+                let origin = self.mediaRemoteGetLocalOrigin?()
+
+                getInfoForClient(
+                    client,
+                    origin,
+                    true,
+                    DispatchQueue.main
+                ) { [weak self] infoObject in
+                    guard let self else { return }
+
+                    let info = infoObject as? [String: Any] ?? [:]
+                    let title =
+                        info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+                        ?? "<nil>"
+                    let artist =
+                        info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+                        ?? "<nil>"
+
+                    var artworkData =
+                        info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+
+                    if artworkData == nil {
+                        for value in info.values {
+                            if let data = value as? Data,
+                               UIImage(data: data) != nil {
+                                artworkData = data
+                                break
+                            }
+                        }
+                    }
+
+                    self.setArtworkDebug(
+                        "CLIENT ROUTE\n" +
+                        "client: YES\n" +
+                        "bundle: \(bundleString)\n" +
+                        "display ID: \(displayString)\n" +
+                        "keys: \(info.count)\n" +
+                        "title: \(title)\n" +
+                        "artist: \(artist)\n" +
+                        "artwork bytes: \(artworkData?.count ?? 0)"
+                    )
+
+                    if let artworkData,
+                       let image = UIImage(data: artworkData) {
+                        self.setArtwork(image, data: artworkData)
+                        return
+                    }
+
+                    if !title.isEmpty && title != "<nil>" ||
+                       !artist.isEmpty && artist != "<nil>" {
+                        self.fetchArtworkFallback(
+                            title: title == "<nil>" ? nil : title,
+                            artist: artist == "<nil>" ? nil : artist,
+                            album:
+                                info["kMRMediaRemoteNowPlayingInfoAlbum"]
+                                    as? String
+                        )
+                        return
+                    }
+
+                    _ = self.tryDirectNowPlayingArtwork()
+                }
+            }
+        }
+
+        return true
     }
 
     @discardableResult
