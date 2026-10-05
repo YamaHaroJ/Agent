@@ -282,17 +282,6 @@
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var start = (seconds / 60) * totalLength;
-
-        /*
-          Keep the long, exaggerated n=2.6 motion from the version you liked.
-          Only the block geometry changes here.
-
-          RULE:
-          - the INNER edge always stays a fixed 40px straight line
-          - that fixed edge always faces the exact center of the screen
-          - the other three sides are free to stretch and bend to meet the screen edge
-          - therefore the marker can never collapse into a triangle
-        */
         var midDistance = start + blockLength / 2;
         var mid = guidePath.getPointAtLength(wrapLength(midDistance));
 
@@ -302,8 +291,8 @@
         var cy = h / 2;
 
         /*
-          Push the marker center to the actual rectangular screen boundary
-          along the same center-to-marker ray.
+          Keep the same long n=2.6 motion. Project that moving point
+          outward to the real rectangular screen boundary.
         */
         var rx = mid.x - cx;
         var ry = mid.y - cy;
@@ -316,41 +305,85 @@
         var edgeY = cy + ry * scaleToEdge;
 
         /*
-          Inward direction is ALWAYS from the marker toward the exact center.
-          The fixed inner edge is perpendicular to this direction.
+          The one edge that NEVER changes:
+          a perfectly straight 40px inner edge, perpendicular to the
+          direction from the screen edge to the exact center.
         */
         var inwardX = cx - edgeX;
         var inwardY = cy - edgeY;
-        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
+        var centerDistance = Math.hypot(inwardX, inwardY) || 1;
 
-        inwardX /= inwardMag;
-        inwardY /= inwardMag;
+        inwardX /= centerDistance;
+        inwardY /= centerDistance;
 
         var tangentX = -inwardY;
         var tangentY = inwardX;
-
         var half = blockLength / 2;
+        var margin = 0.5;
+
+        function innerEdgeAt(depth) {
+          var icx = edgeX + inwardX * depth;
+          var icy = edgeY + inwardY * depth;
+
+          return {
+            a: {
+              x: icx - tangentX * half,
+              y: icy - tangentY * half
+            },
+            b: {
+              x: icx + tangentX * half,
+              y: icy + tangentY * half
+            }
+          };
+        }
+
+        function fullyInside(edge) {
+          return (
+            edge.a.x >= margin &&
+            edge.a.x <= w - margin &&
+            edge.a.y >= margin &&
+            edge.a.y <= h - margin &&
+            edge.b.x >= margin &&
+            edge.b.x <= w - margin &&
+            edge.b.y >= margin &&
+            edge.b.y <= h - margin
+          );
+        }
 
         /*
-          Fixed inner edge: always 40px long, always flat.
-          On a middle edge this produces the original 40×40 square.
+          On the middle of an edge this stays exactly 40px deep.
+          Near a corner, ONLY the depth stretches inward enough to keep
+          the entire fixed inner edge visible. This prevents the marker
+          from ever collapsing into a diamond/triangle.
         */
-        var innerCenterX = edgeX + inwardX * blockThickness;
-        var innerCenterY = edgeY + inwardY * blockThickness;
+        var innerDepth = blockThickness;
+        var fixedEdge = innerEdgeAt(innerDepth);
 
-        var innerA = {
-          x: innerCenterX - tangentX * half,
-          y: innerCenterY - tangentY * half
-        };
+        if (!fullyInside(fixedEdge)) {
+          var low = blockThickness;
+          var high = centerDistance;
 
-        var innerB = {
-          x: innerCenterX + tangentX * half,
-          y: innerCenterY + tangentY * half
-        };
+          for (var n = 0; n < 14; n++) {
+            var testDepth = (low + high) / 2;
+            var testEdge = innerEdgeAt(testDepth);
+
+            if (fullyInside(testEdge)) {
+              high = testDepth;
+            } else {
+              low = testDepth;
+            }
+          }
+
+          innerDepth = high;
+          fixedEdge = innerEdgeAt(innerDepth);
+        }
+
+        var innerA = fixedEdge.a;
+        var innerB = fixedEdge.b;
 
         /*
-          The two side edges stretch outward until each end reaches
-          the real screen boundary.
+          The other two sides stretch straight outward until they meet
+          the physical screen edge.
         */
         var outerA = hitBoundaryFromInside(
           innerA, -inwardX, -inwardY, w, h
@@ -360,20 +393,15 @@
           innerB, -inwardX, -inwardY, w, h
         );
 
-        var parts = [];
-
-        parts.push(
-          'M ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3)
-        );
-
-        parts.push(
+        var parts = [
+          'M ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3),
           'L ' + outerA.x.toFixed(3) + ' ' + outerA.y.toFixed(3)
-        );
+        ];
 
         /*
-          If the two stretched sides hit adjacent screen edges,
-          the OUTER edge bends around that corner.
-          The fixed inner edge below never changes shape.
+          The fourth/outer edge is the only edge that bends.
+          When its endpoints land on adjacent sides, curve it around
+          their shared screen corner. The fixed inner edge remains untouched.
         */
         var corner = sharedCorner(outerA.edge, outerB.edge, w, h);
 
@@ -390,15 +418,10 @@
         }
 
         parts.push(
-          'L ' + innerB.x.toFixed(3) + ' ' + innerB.y.toFixed(3)
+          'L ' + innerB.x.toFixed(3) + ' ' + innerB.y.toFixed(3),
+          'L ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3),
+          'Z'
         );
-
-        /* This last edge is the unchanged fixed inner edge. */
-        parts.push(
-          'L ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3)
-        );
-
-        parts.push('Z');
 
         secondBlock.setAttribute('d', parts.join(' '));
       }
