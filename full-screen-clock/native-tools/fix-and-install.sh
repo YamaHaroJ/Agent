@@ -1,7 +1,18 @@
 #!/bin/zsh
 set -euo pipefail
 
-export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
+  export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
+else
+  XCODE_APP="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print -quit)"
+  if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP/Contents/Developer" ]]; then
+    echo "ERROR: Could not find Xcode in /Applications."
+    exit 1
+  fi
+  export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+fi
+
+echo "Using Xcode developer directory: $DEVELOPER_DIR"
 
 PROJECT_ROOT="$HOME/Documents/Clock"
 PROJECT="$PROJECT_ROOT/Clock.xcodeproj"
