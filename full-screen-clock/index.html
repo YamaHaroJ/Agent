@@ -283,7 +283,6 @@
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var start = (seconds / 60) * totalLength;
         var midDistance = start + blockLength / 2;
-        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
 
         var w = window.innerWidth;
         var h = window.innerHeight;
@@ -291,8 +290,14 @@
         var cy = h / 2;
 
         /*
-          Keep the same long n=2.6 motion. Project that moving point
-          outward to the real rectangular screen boundary.
+          Keep the long exaggerated n=2.6 motion.
+          The moving point on the guide curve determines where the marker is.
+        */
+        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
+
+        /*
+          Project that moving point outward to the real rectangular
+          screen boundary so the marker stays pinned to the physical edge.
         */
         var rx = mid.x - cx;
         var ry = mid.y - cy;
@@ -305,19 +310,45 @@
         var edgeY = cy + ry * scaleToEdge;
 
         /*
-          The one edge that NEVER changes:
-          a perfectly straight 40px inner edge, perpendicular to the
-          direction from the screen edge to the exact center.
+          NEW ORIENTATION RULE:
+
+          Do NOT point toward the exact screen center.
+
+          Instead, use a second point that follows the marker just inside
+          the perimeter. That point moves with the second marker, so the
+          fixed inner edge stays parallel to the local edge/curve instead
+          of aiming radially at one central point.
         */
-        var inwardX = cx - edgeX;
-        var inwardY = cy - edgeY;
-        var centerDistance = Math.hypot(inwardX, inwardY) || 1;
+        var local = pointAndInwardNormal(midDistance);
 
-        inwardX /= centerDistance;
-        inwardY /= centerDistance;
+        var inwardX = local.nx;
+        var inwardY = local.ny;
 
+        /*
+          Ensure the normal really points into the screen.
+        */
+        var testX = edgeX + inwardX * 4;
+        var testY = edgeY + inwardY * 4;
+
+        if (
+          testX < 0 || testX > w ||
+          testY < 0 || testY > h
+        ) {
+          inwardX *= -1;
+          inwardY *= -1;
+        }
+
+        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
+        inwardX /= inwardMag;
+        inwardY /= inwardMag;
+
+        /*
+          The fixed edge is perpendicular to the moving inward direction,
+          so it stays parallel to the nearby screen edge.
+        */
         var tangentX = -inwardY;
         var tangentY = inwardX;
+
         var half = blockLength / 2;
         var margin = 0.5;
 
@@ -351,19 +382,18 @@
         }
 
         /*
-          On the middle of an edge this stays exactly 40px deep.
-          Near a corner, ONLY the depth stretches inward enough to keep
-          the entire fixed inner edge visible. This prevents the marker
-          from ever collapsing into a diamond/triangle.
+          Keep the inner edge exactly 40px whenever possible.
+          Near a corner, move that unchanged edge farther inward only
+          enough to keep all 40px visible.
         */
         var innerDepth = blockThickness;
         var fixedEdge = innerEdgeAt(innerDepth);
 
         if (!fullyInside(fixedEdge)) {
           var low = blockThickness;
-          var high = centerDistance;
+          var high = Math.hypot(w, h);
 
-          for (var n = 0; n < 14; n++) {
+          for (var n = 0; n < 16; n++) {
             var testDepth = (low + high) / 2;
             var testEdge = innerEdgeAt(testDepth);
 
@@ -382,8 +412,7 @@
         var innerB = fixedEdge.b;
 
         /*
-          The other two sides stretch straight outward until they meet
-          the physical screen edge.
+          The other two sides stretch outward to the real screen edge.
         */
         var outerA = hitBoundaryFromInside(
           innerA, -inwardX, -inwardY, w, h
@@ -399,9 +428,9 @@
         ];
 
         /*
-          The fourth/outer edge is the only edge that bends.
-          When its endpoints land on adjacent sides, curve it around
-          their shared screen corner. The fixed inner edge remains untouched.
+          If those sides land on adjacent physical edges, bend only the
+          OUTER edge around the shared corner. The inner 40px edge remains
+          straight and unchanged.
         */
         var corner = sharedCorner(outerA.edge, outerB.edge, w, h);
 
