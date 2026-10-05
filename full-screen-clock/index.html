@@ -57,7 +57,7 @@
       stroke-linecap: butt;
       stroke-linejoin: round;
       pointer-events: none;
-      visibility: hidden;
+      stroke-dasharray: 0 999999;
     }
 
     #clock {
@@ -196,13 +196,15 @@
           blockSize + ' ' + (totalLength - blockSize);
 
         /*
-          Safari can briefly paint the dash pattern before its final
-          measured perimeter is ready. Reveal it only after setup is complete
-          so there is never a flash of multiple second markers.
+          Start with a zero-length dash in CSS, then replace it only after
+          Safari has measured the final path. This prevents startup duplicates
+          without hiding the actual marker.
         */
-        requestAnimationFrame(function () {
-          secondPath.style.visibility = 'visible';
-        });
+        var now = new Date();
+        var seconds = now.getSeconds() + now.getMilliseconds() / 1000;
+        var progress = seconds / 60;
+        secondPath.style.strokeDashoffset =
+          String(-(progress * totalLength));
       }
 
       function setSecondBlock(d) {
