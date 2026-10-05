@@ -50,14 +50,15 @@
       pointer-events: none;
     }
 
-    #second-path {
+    #guide-path {
       fill: none;
-      stroke: #fff;
-      stroke-width: 40;
-      stroke-linecap: butt;
-      stroke-linejoin: round;
+      stroke: none;
+    }
+
+    #second-block {
+      fill: #fff;
+      stroke: none;
       pointer-events: none;
-      stroke-dasharray: 0 999999;
     }
 
     #clock {
@@ -116,7 +117,8 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <path id="second-path"></path>
+      <path id="guide-path"></path>
+      <path id="second-block"></path>
     </svg>
 
     <div id="clock">12:00 AM</div>
@@ -128,10 +130,12 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var secondPath = document.getElementById('second-path');
+      var guidePath = document.getElementById('guide-path');
+      var secondBlock = document.getElementById('second-block');
 
       var totalLength = 0;
-      var blockSize = 40;
+      var blockLength = 40;
+      var blockThickness = 40;
 
       function setClock(d) {
         var h = d.getHours();
@@ -142,26 +146,16 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      /*
-        Continuous screen curve:
-        - exactly horizontal at top/bottom midpoint
-        - exactly vertical at left/right midpoint
-        - gradually bends and tilts over the whole trip toward each corner
-        - no sudden "straight edge -> round corner" transition
-      */
       function squircleScreenPath(w, h) {
         var cx = w / 2;
         var cy = h / 2;
         var a = w / 2;
         var b = h / 2;
-
-        /* Higher = flatter centers and tighter corners. */
         var n = 4.4;
         var power = 2 / n;
-        var samples = 720;
+        var samples = 900;
         var parts = [];
 
-        /* Start at top center so 00 seconds stays at the top middle. */
         for (var i = 0; i <= samples; i++) {
           var t = -Math.PI / 2 + (Math.PI * 2 * i / samples);
           var c = Math.cos(t);
@@ -182,46 +176,100 @@
         var h = window.innerHeight;
 
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-        secondPath.setAttribute('d', squircleScreenPath(w, h));
+        guidePath.setAttribute('d', squircleScreenPath(w, h));
+        totalLength = guidePath.getTotalLength();
 
-        totalLength = secondPath.getTotalLength();
-
-        /*
-          40px long × 40px thick at the edge midpoints.
-          Because the centerline runs on the viewport boundary,
-          half of it is naturally clipped offscreen.
-          The dash itself bends as the squircle bends.
-        */
-        secondPath.style.strokeDasharray =
-          blockSize + ' ' + (totalLength - blockSize);
-
-        /*
-          Start with a zero-length dash in CSS, then replace it only after
-          Safari has measured the final path. This prevents startup duplicates
-          without hiding the actual marker.
-        */
-        var now = new Date();
-        var seconds = now.getSeconds() + now.getMilliseconds() / 1000;
-        var progress = seconds / 60;
-        secondPath.style.strokeDashoffset =
-          String(-(progress * totalLength));
+        drawSecondBlock(new Date());
       }
 
-      function setSecondBlock(d) {
+      function wrapLength(v) {
+        if (!totalLength) return 0;
+        v %= totalLength;
+        if (v < 0) v += totalLength;
+        return v;
+      }
+
+      function pointAndInwardNormal(length) {
+        var s = wrapLength(length);
+        var delta = 0.75;
+
+        var p = guidePath.getPointAtLength(s);
+        var before = guidePath.getPointAtLength(wrapLength(s - delta));
+        var after = guidePath.getPointAtLength(wrapLength(s + delta));
+
+        var tx = after.x - before.x;
+        var ty = after.y - before.y;
+        var mag = Math.hypot(tx, ty) || 1;
+
+        tx /= mag;
+        ty /= mag;
+
+        /* Clockwise path: rotate tangent +90° to point inward. */
+        var nx = -ty;
+        var ny = tx;
+
+        return {
+          x: p.x,
+          y: p.y,
+          nx: nx,
+          ny: ny
+        };
+      }
+
+      function offsetPoint(length, offset) {
+        var p = pointAndInwardNormal(length);
+
+        return {
+          x: p.x + p.nx * offset,
+          y: p.y + p.ny * offset
+        };
+      }
+
+      function drawSecondBlock(d) {
         if (!totalLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var progress = seconds / 60;
+        var start = (seconds / 60) * totalLength;
 
-        secondPath.style.strokeDashoffset =
-          String(-(progress * totalLength));
+        /*
+          Build a real solid strip instead of using SVG dashes.
+          The strip follows the squircle tangent continuously:
+          straight at each edge midpoint, progressively tilted toward
+          a corner, curved through it, then progressively straight again.
+        */
+        var samples = 18;
+        var half = blockThickness / 2;
+        var outer = [];
+        var inner = [];
+
+        for (var i = 0; i <= samples; i++) {
+          var t = i / samples;
+          var distance = start + blockLength * t;
+
+          outer.push(offsetPoint(distance, -half));
+          inner.push(offsetPoint(distance, half));
+        }
+
+        var parts = [];
+        parts.push('M ' + outer[0].x.toFixed(3) + ' ' + outer[0].y.toFixed(3));
+
+        for (var j = 1; j < outer.length; j++) {
+          parts.push('L ' + outer[j].x.toFixed(3) + ' ' + outer[j].y.toFixed(3));
+        }
+
+        for (var k = inner.length - 1; k >= 0; k--) {
+          parts.push('L ' + inner[k].x.toFixed(3) + ' ' + inner[k].y.toFixed(3));
+        }
+
+        parts.push('Z');
+        secondBlock.setAttribute('d', parts.join(' '));
       }
 
       function update() {
         var now = new Date();
 
         setClock(now);
-        setSecondBlock(now);
+        drawSecondBlock(now);
 
         requestAnimationFrame(update);
       }
