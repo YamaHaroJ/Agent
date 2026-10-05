@@ -317,31 +317,36 @@
         var samples = 28;
         var outer = [];
         var inner = [];
+        var endSlant = 11;
 
+        /*
+          Slant BOTH ends symmetrically:
+          the outside edge starts a little earlier and ends a little later,
+          while the inside edge keeps the original 40px length.
+          This makes the two end faces lean outward in opposite directions.
+        */
         for (var i = 0; i <= samples; i++) {
           var t = i / samples;
-          var distance = start + blockLength * t;
 
-          /*
-            The n=2.6 squircle guide is still what controls the long,
-            exaggerated bend/timing that you liked.
-          */
-          var guide = guidePath.getPointAtLength(wrapLength(distance));
+          var outerDistance =
+            start - endSlant +
+            (blockLength + endSlant * 2) * t;
 
-          /*
-            Project EACH sample independently to the real screen edge.
-            This is what makes the whole marker warp instead of merely rotate.
-          */
+          var innerDistance =
+            start + blockLength * t;
+
+          var outerGuide =
+            guidePath.getPointAtLength(wrapLength(outerDistance));
+
+          var innerGuide =
+            guidePath.getPointAtLength(wrapLength(innerDistance));
+
           outer.push(
-            pointOnInsetRectangleFromCenter(guide, 0)
+            pointOnInsetRectangleFromCenter(outerGuide, 0)
           );
 
-          /*
-            The inside edge follows the same moving perimeter too,
-            just 40px inward. It bends and flows with the outside edge.
-          */
           inner.push(
-            pointOnInsetRectangleFromCenter(guide, blockThickness)
+            pointOnInsetRectangleFromCenter(innerGuide, blockThickness)
           );
         }
 
