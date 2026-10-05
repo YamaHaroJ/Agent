@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Clock" />
   <meta name="theme-color" content="#000000" />
-  <title>Full Screen Clock</title>\n  <link rel="preconnect" href="https://fonts.googleapis.com">\n  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n  <link href="https://fonts.googleapis.com/css2?family=UnifrakturCook:wght@700&display=swap" rel="stylesheet">
+  <title>Full Screen Clock</title>
   <style>
     * { box-sizing: border-box; }
 
@@ -47,12 +47,14 @@
       pointer-events: none;
     }
 
-    #second-path {
+    #guide-path {
       fill: none;
-      stroke: #fff;
-      stroke-width: 40;
-      stroke-linecap: butt;
-      stroke-linejoin: round;
+      stroke: none;
+    }
+
+    #second-block {
+      fill: #fff;
+      stroke: none;
       pointer-events: none;
     }
 
@@ -109,10 +111,11 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <path id="second-path"></path>
+      <path id="guide-path"></path>
+      <path id="second-block"></path>
     </svg>
 
-    <div id="clock">12:00:00 AM</div>
+    <div id="clock">12:00 AM</div>
     <button id="soundcloud" type="button">Open SoundCloud</button>
   </main>
 
@@ -121,10 +124,13 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var secondPath = document.getElementById('second-path');
+      var guidePath = document.getElementById('guide-path');
+      var secondBlock = document.getElementById('second-block');
 
       var totalLength = 0;
-      var segmentLength = 0;
+      var blockThickness = 40;
+      var blockLength = 40;
+      var endSlant = 11;
 
       function setClock(d) {
         var h = d.getHours();
@@ -137,7 +143,6 @@
       function roundedRectPath(x, y, w, h, r) {
         var cx = x + (w / 2);
 
-        /* Start the perimeter at the exact top-center so 00 seconds lands here. */
         return [
           'M', cx, y,
           'H', x + w - r,
@@ -158,43 +163,100 @@
         var h = window.innerHeight;
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
-        var blockThickness = 40;
-        var inset = blockThickness / 2;
+        var half = blockThickness / 2;
+        var inset = half;
         var radius = Math.max(38, Math.min(64, Math.min(w, h) * 0.07));
 
-        var d = roundedRectPath(
-          inset,
-          inset,
-          w - inset * 2,
-          h - inset * 2,
-          radius
+        guidePath.setAttribute(
+          'd',
+          roundedRectPath(
+            inset,
+            inset,
+            w - inset * 2,
+            h - inset * 2,
+            radius
+          )
         );
 
-        secondPath.setAttribute('d', d);
+        totalLength = guidePath.getTotalLength();
+      }
 
-        totalLength = secondPath.getTotalLength();
+      function wrapLength(v) {
+        if (!totalLength) return 0;
+        v %= totalLength;
+        if (v < 0) v += totalLength;
+        return v;
+      }
 
-        /* 40px long × 40px thick = square on straight edges. */
-        segmentLength = blockThickness;
+      function pointAndNormal(length) {
+        var delta = 0.6;
+        var s = wrapLength(length);
+        var before = guidePath.getPointAtLength(wrapLength(s - delta));
+        var after = guidePath.getPointAtLength(wrapLength(s + delta));
+        var p = guidePath.getPointAtLength(s);
 
-        /*
-          The dash pattern is exactly one full perimeter long.
-          That means when the square crosses the 59→00 seam,
-          the part leaving the end continues immediately at the start
-          instead of disappearing and popping back in.
-        */
-        secondPath.style.strokeDasharray =
-          segmentLength + ' ' + (totalLength - segmentLength);
+        var tx = after.x - before.x;
+        var ty = after.y - before.y;
+        var mag = Math.hypot(tx, ty) || 1;
+        tx /= mag;
+        ty /= mag;
+
+        /* Inward normal for our clockwise screen path. */
+        var nx = -ty;
+        var ny = tx;
+
+        return { x: p.x, y: p.y, nx: nx, ny: ny };
+      }
+
+      function boundaryPoint(length, inwardAmount) {
+        var q = pointAndNormal(length);
+        return {
+          x: q.x + q.nx * inwardAmount,
+          y: q.y + q.ny * inwardAmount
+        };
       }
 
       function setSegment(d) {
         if (!totalLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var progress = seconds / 60;
+        var start = (seconds / 60) * totalLength;
+        var samples = 14;
+        var half = blockThickness / 2;
 
-        secondPath.style.strokeDashoffset =
-          String(-(progress * totalLength));
+        /*
+          The outer edge is shifted slightly forward relative to the inner edge.
+          That gives the block the same slanted/raked ends as the reference,
+          while both long edges physically follow the rounded screen perimeter.
+        */
+        var outerStart = start + endSlant;
+        var innerStart = start;
+        var outer = [];
+        var inner = [];
+
+        for (var i = 0; i <= samples; i++) {
+          var t = i / samples;
+          outer.push(
+            boundaryPoint(outerStart + blockLength * t, -half)
+          );
+          inner.push(
+            boundaryPoint(innerStart + blockLength * t, half)
+          );
+        }
+
+        var parts = [];
+        parts.push('M ' + outer[0].x + ' ' + outer[0].y);
+
+        for (var j = 1; j < outer.length; j++) {
+          parts.push('L ' + outer[j].x + ' ' + outer[j].y);
+        }
+
+        for (var k = inner.length - 1; k >= 0; k--) {
+          parts.push('L ' + inner[k].x + ' ' + inner[k].y);
+        }
+
+        parts.push('Z');
+        secondBlock.setAttribute('d', parts.join(' '));
       }
 
       function update() {
