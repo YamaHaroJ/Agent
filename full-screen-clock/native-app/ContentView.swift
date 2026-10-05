@@ -2,6 +2,7 @@ import SwiftUI
 import WebKit
 import UIKit
 import MediaPlayer
+import PhotosUI
 import Darwin
 
 struct ContentView: View {
@@ -23,12 +24,15 @@ struct ClockViewController: UIViewControllerRepresentable {
     ) {}
 }
 
-final class FullScreenClockViewController: UIViewController, WKNavigationDelegate {
-    // CLOCK_ART_BRIDGE_URL
-    private let bridgeBaseURL =
-        URL(string: "http://Jays-MacBook-Pro.local:8765")!
+final class FullScreenClockViewController:
+    UIViewController,
+    WKNavigationDelegate,
+    PHPickerViewControllerDelegate
+{
+    // BACKGROUND_PHOTO_SETTINGS
+    private let backgroundFileName = "clock-background.jpg"
 
-    private var artworkView: UIImageView!
+    private var backgroundImageView: UIImageView!
     private var webView: WKWebView!
     private var errorLabel: UILabel!
 
@@ -38,22 +42,10 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var nextButton: UIButton!
     private var volumeView: MPVolumeView!
 
+    private var settingsButton: UIButton!
+
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
-
-    private var bridgeTimer: Timer?
-    private var bridgeStatusRequestInFlight = false
-    private var bridgeArtworkRequestInFlight = false
-    private var lastBridgeArtworkHash: String?
-
-    private lazy var bridgeSession: URLSession = {
-        let config = URLSessionConfiguration.ephemeral
-        config.requestCachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        config.timeoutIntervalForRequest = 2.5
-        config.timeoutIntervalForResource = 4.0
-        config.waitsForConnectivity = false
-        return URLSession(configuration: config)
-    }()
 
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
@@ -63,33 +55,220 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         view.backgroundColor = .black
 
-        setupArtworkBackground()
+        setupBackground()
         setupWebClock()
         setupErrorLabel()
         setupMediaRemote()
         setupMediaControls()
-        startBridgeArtworkUpdates()
+        setupSettingsButton()
+        loadSavedBackground()
 
         UIApplication.shared.isIdleTimerDisabled = true
         loadClock()
     }
 
-    private func setupArtworkBackground() {
-        artworkView = UIImageView()
-        artworkView.translatesAutoresizingMaskIntoConstraints = false
-        artworkView.backgroundColor = .black
-        artworkView.contentMode = .scaleAspectFill
-        artworkView.clipsToBounds = true
+    // MARK: - Background photo
 
-        view.addSubview(artworkView)
+    private func setupBackground() {
+        backgroundImageView = UIImageView()
+        backgroundImageView.translatesAutoresizingMaskIntoConstraints = false
+        backgroundImageView.backgroundColor = .black
+        backgroundImageView.contentMode = .scaleAspectFill
+        backgroundImageView.clipsToBounds = true
+
+        view.addSubview(backgroundImageView)
 
         NSLayoutConstraint.activate([
-            artworkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            artworkView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            artworkView.topAnchor.constraint(equalTo: view.topAnchor),
-            artworkView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            backgroundImageView.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor
+            ),
+            backgroundImageView.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor
+            ),
+            backgroundImageView.topAnchor.constraint(
+                equalTo: view.topAnchor
+            ),
+            backgroundImageView.bottomAnchor.constraint(
+                equalTo: view.bottomAnchor
+            )
         ])
     }
+
+    private var backgroundFileURL: URL? {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent(backgroundFileName)
+    }
+
+    private func loadSavedBackground() {
+        guard
+            let url = backgroundFileURL,
+            let data = try? Data(contentsOf: url),
+            let image = UIImage(data: data)
+        else {
+            backgroundImageView.image = nil
+            backgroundImageView.backgroundColor = .black
+            return
+        }
+
+        backgroundImageView.image = image
+        backgroundImageView.backgroundColor = .black
+    }
+
+    private func saveBackground(_ image: UIImage) {
+        guard
+            let url = backgroundFileURL,
+            let data = image.jpegData(compressionQuality: 0.92)
+        else {
+            return
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {
+            return
+        }
+
+        backgroundImageView.image = image
+        backgroundImageView.backgroundColor = .black
+    }
+
+    private func removeBackground() {
+        if let url = backgroundFileURL {
+            try? FileManager.default.removeItem(at: url)
+        }
+
+        backgroundImageView.image = nil
+        backgroundImageView.backgroundColor = .black
+    }
+
+    private func setupSettingsButton() {
+        settingsButton = UIButton(type: .system)
+        settingsButton.translatesAutoresizingMaskIntoConstraints = false
+        settingsButton.tintColor = .white
+        settingsButton.backgroundColor = UIColor.black.withAlphaComponent(0.48)
+        settingsButton.layer.cornerRadius = 22
+        settingsButton.layer.borderWidth = 1
+        settingsButton.layer.borderColor =
+            UIColor.white.withAlphaComponent(0.18).cgColor
+
+        settingsButton.setImage(
+            UIImage(
+                systemName: "gearshape.fill",
+                withConfiguration: UIImage.SymbolConfiguration(
+                    pointSize: 19,
+                    weight: .semibold
+                )
+            ),
+            for: .normal
+        )
+
+        settingsButton.accessibilityLabel = "Clock Settings"
+        settingsButton.addTarget(
+            self,
+            action: #selector(openSettings),
+            for: .touchUpInside
+        )
+
+        view.addSubview(settingsButton)
+
+        NSLayoutConstraint.activate([
+            settingsButton.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: 10
+            ),
+            settingsButton.trailingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.trailingAnchor,
+                constant: -14
+            ),
+            settingsButton.widthAnchor.constraint(equalToConstant: 44),
+            settingsButton.heightAnchor.constraint(equalToConstant: 44)
+        ])
+    }
+
+    @objc private func openSettings() {
+        let sheet = UIAlertController(
+            title: "Clock Background",
+            message: nil,
+            preferredStyle: .actionSheet
+        )
+
+        sheet.addAction(
+            UIAlertAction(
+                title: "Choose Photo",
+                style: .default
+            ) { [weak self] _ in
+                self?.openPhotoPicker()
+            }
+        )
+
+        if backgroundImageView.image != nil {
+            sheet.addAction(
+                UIAlertAction(
+                    title: "Remove Background",
+                    style: .destructive
+                ) { [weak self] _ in
+                    self?.removeBackground()
+                }
+            )
+        }
+
+        sheet.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = settingsButton
+            popover.sourceRect = settingsButton.bounds
+        }
+
+        present(sheet, animated: true)
+    }
+
+    private func openPhotoPicker() {
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 1
+
+        let picker = PHPickerViewController(configuration: configuration)
+        picker.delegate = self
+
+        present(picker, animated: true)
+    }
+
+    func picker(
+        _ picker: PHPickerViewController,
+        didFinishPicking results: [PHPickerResult]
+    ) {
+        picker.dismiss(animated: true)
+
+        guard
+            let provider = results.first?.itemProvider,
+            provider.canLoadObject(ofClass: UIImage.self)
+        else {
+            return
+        }
+
+        provider.loadObject(ofClass: UIImage.self) { [weak self] object, _ in
+            guard let image = object as? UIImage else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                self?.saveBackground(image)
+            }
+        }
+    }
+
+    // MARK: - Web clock
 
     private func setupWebClock() {
         let config = WKWebViewConfiguration()
@@ -160,7 +339,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
-            guard let self else { return }
+            guard let self else {
+                return
+            }
 
             guard
                 let data,
@@ -176,7 +357,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             }
 
             let nativeTransparencyCSS = """
-            <style id="native-artwork-background">
+            <style id="native-photo-background">
               html, body, #app {
                 background: transparent !important;
                 background-color: transparent !important;
@@ -197,118 +378,6 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                         string: "https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/"
                     )
                 )
-            }
-        }.resume()
-    }
-
-    // MARK: - Mac artwork bridge
-
-    private func startBridgeArtworkUpdates() {
-        refreshBridgeArtwork()
-
-        bridgeTimer = Timer.scheduledTimer(
-            withTimeInterval: 1.5,
-            repeats: true
-        ) { [weak self] _ in
-            self?.refreshBridgeArtwork()
-        }
-    }
-
-    private func refreshBridgeArtwork() {
-        guard !bridgeStatusRequestInFlight else {
-            return
-        }
-
-        bridgeStatusRequestInFlight = true
-
-        var request = URLRequest(
-            url: bridgeBaseURL.appendingPathComponent("status"),
-            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
-            timeoutInterval: 2.5
-        )
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-        bridgeSession.dataTask(with: request) { [weak self] data, response, _ in
-            guard let self else { return }
-
-            DispatchQueue.main.async {
-                self.bridgeStatusRequestInFlight = false
-            }
-
-            guard
-                let http = response as? HTTPURLResponse,
-                http.statusCode == 200,
-                let data,
-                let json = try? JSONSerialization.jsonObject(with: data)
-                    as? [String: Any]
-            else {
-                return
-            }
-
-            let hasArtwork = json["hasArtwork"] as? Bool ?? false
-            let artworkHash = json["artworkSHA256"] as? String
-
-            guard
-                hasArtwork,
-                let artworkHash,
-                !artworkHash.isEmpty
-            else {
-                return
-            }
-
-            DispatchQueue.main.async {
-                guard artworkHash != self.lastBridgeArtworkHash else {
-                    return
-                }
-
-                self.fetchBridgeArtwork(expectedHash: artworkHash)
-            }
-        }.resume()
-    }
-
-    private func fetchBridgeArtwork(expectedHash: String) {
-        guard !bridgeArtworkRequestInFlight else {
-            return
-        }
-
-        bridgeArtworkRequestInFlight = true
-
-        var components = URLComponents(
-            url: bridgeBaseURL.appendingPathComponent("artwork"),
-            resolvingAgainstBaseURL: false
-        )!
-
-        components.queryItems = [
-            URLQueryItem(name: "v", value: expectedHash)
-        ]
-
-        var request = URLRequest(
-            url: components.url!,
-            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
-            timeoutInterval: 4.0
-        )
-        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
-
-        bridgeSession.dataTask(with: request) { [weak self] data, response, _ in
-            guard let self else { return }
-
-            DispatchQueue.main.async {
-                self.bridgeArtworkRequestInFlight = false
-            }
-
-            guard
-                let http = response as? HTTPURLResponse,
-                http.statusCode == 200,
-                let data,
-                let image = UIImage(data: data)
-            else {
-                return
-            }
-
-            DispatchQueue.main.async {
-                self.lastBridgeArtworkHash = expectedHash
-                self.artworkView.image = image
-                self.artworkView.backgroundColor = .black
             }
         }.resume()
     }
@@ -540,8 +609,6 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     deinit {
-        bridgeTimer?.invalidate()
-        bridgeSession.invalidateAndCancel()
         UIApplication.shared.isIdleTimerDisabled = false
 
         if let mediaRemoteHandle {
