@@ -50,6 +50,11 @@
       pointer-events: none;
     }
 
+    #guide-path {
+      fill: none;
+      stroke: none;
+    }
+
     #second-block {
       fill: #fff;
       stroke: none;
@@ -112,6 +117,7 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
+      <path id="guide-path"></path>
       <path id="second-block"></path>
     </svg>
 
@@ -124,13 +130,12 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
+      var guidePath = document.getElementById('guide-path');
       var secondBlock = document.getElementById('second-block');
 
-      var screenW = 0;
-      var screenH = 0;
-
-      var depth = 40;
-      var width = 40;
+      var totalLength = 0;
+      var blockLength = 40;
+      var blockThickness = 40;
 
       function setClock(d) {
         var h = d.getHours();
@@ -141,188 +146,157 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      function setup() {
-        screenW = window.innerWidth;
-        screenH = window.innerHeight;
-        svg.setAttribute('viewBox', '0 0 ' + screenW + ' ' + screenH);
+      function squircleScreenPath(w, h) {
+        var cx = w / 2;
+        var cy = h / 2;
+        var a = w / 2;
+        var b = h / 2;
+        var n = 2.6;
+        var power = 2 / n;
+        var samples = 900;
+        var parts = [];
+
+        for (var i = 0; i <= samples; i++) {
+          var t = -Math.PI / 2 + (Math.PI * 2 * i / samples);
+          var c = Math.cos(t);
+          var s = Math.sin(t);
+
+          var x = cx + a * Math.sign(c) * Math.pow(Math.abs(c), power);
+          var y = cy + b * Math.sign(s) * Math.pow(Math.abs(s), power);
+
+          parts.push((i === 0 ? 'M ' : 'L ') + x.toFixed(3) + ' ' + y.toFixed(3));
+        }
+
+        parts.push('Z');
+        return parts.join(' ');
+      }
+
+      function setupPath() {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+
+        svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        guidePath.setAttribute('d', squircleScreenPath(w, h));
+        totalLength = guidePath.getTotalLength();
+
         drawSecondBlock(new Date());
       }
 
-      /*
-        00 top-middle
-        07.5 top-right
-        15 right-middle
-        22.5 bottom-right
-        30 bottom-middle
-        37.5 bottom-left
-        45 left-middle
-        52.5 top-left
-        60 top-middle
-
-        This keeps the long, gradual tilt you liked.
-      */
-      function perimeterPoint(progress) {
-        progress = ((progress % 1) + 1) % 1;
-
-        var s = progress * 8;
-        var i = Math.floor(s) % 8;
-        var t = s - Math.floor(s);
-        var w = screenW;
-        var h = screenH;
-
-        switch (i) {
-          case 0: return { x: w/2 + (w/2)*t, y: 0 };
-          case 1: return { x: w, y: (h/2)*t };
-          case 2: return { x: w, y: h/2 + (h/2)*t };
-          case 3: return { x: w - (w/2)*t, y: h };
-          case 4: return { x: w/2 - (w/2)*t, y: h };
-          case 5: return { x: 0, y: h - (h/2)*t };
-          case 6: return { x: 0, y: h/2 - (h/2)*t };
-          default:return { x: (w/2)*t, y: 0 };
-        }
+      function wrapLength(v) {
+        if (!totalLength) return 0;
+        v %= totalLength;
+        if (v < 0) v += totalLength;
+        return v;
       }
 
-      function hitScreenFromInside(p, dx, dy) {
-        var bestT = Infinity;
-        var edge = '';
-        var t;
+      function pointAndInwardNormal(length) {
+        var s = wrapLength(length);
+        var delta = 0.75;
 
-        if (dx > 0.000001) {
-          t = (screenW - p.x) / dx;
-          if (t >= 0 && t < bestT) { bestT = t; edge = 'right'; }
-        } else if (dx < -0.000001) {
-          t = (0 - p.x) / dx;
-          if (t >= 0 && t < bestT) { bestT = t; edge = 'left'; }
-        }
+        var p = guidePath.getPointAtLength(s);
+        var before = guidePath.getPointAtLength(wrapLength(s - delta));
+        var after = guidePath.getPointAtLength(wrapLength(s + delta));
 
-        if (dy > 0.000001) {
-          t = (screenH - p.y) / dy;
-          if (t >= 0 && t < bestT) { bestT = t; edge = 'bottom'; }
-        } else if (dy < -0.000001) {
-          t = (0 - p.y) / dy;
-          if (t >= 0 && t < bestT) { bestT = t; edge = 'top'; }
-        }
+        var tx = after.x - before.x;
+        var ty = after.y - before.y;
+        var mag = Math.hypot(tx, ty) || 1;
+
+        tx /= mag;
+        ty /= mag;
+
+        /* Clockwise path: rotate tangent +90° to point inward. */
+        var nx = -ty;
+        var ny = tx;
 
         return {
-          x: p.x + dx * bestT,
-          y: p.y + dy * bestT,
-          edge: edge
+          x: p.x,
+          y: p.y,
+          nx: nx,
+          ny: ny
         };
       }
 
-      function cornerBetween(a, b) {
-        var pair = a + '-' + b;
-        var reverse = b + '-' + a;
+      function offsetPoint(length, offset) {
+        var p = pointAndInwardNormal(length);
 
-        if (pair === 'top-right' || reverse === 'top-right') {
-          return { x: screenW, y: 0 };
-        }
-
-        if (pair === 'right-bottom' || reverse === 'right-bottom') {
-          return { x: screenW, y: screenH };
-        }
-
-        if (pair === 'bottom-left' || reverse === 'bottom-left') {
-          return { x: 0, y: screenH };
-        }
-
-        if (pair === 'left-top' || reverse === 'left-top') {
-          return { x: 0, y: 0 };
-        }
-
-        return null;
+        return {
+          x: p.x + p.nx * offset,
+          y: p.y + p.ny * offset
+        };
       }
 
       function drawSecondBlock(d) {
-        if (!screenW || !screenH) return;
+        if (!totalLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var progress = seconds / 60;
-
-        var edgeCenter = perimeterPoint(progress);
-
-        var cx = screenW / 2;
-        var cy = screenH / 2;
+        var start = (seconds / 60) * totalLength;
 
         /*
-          Inward direction ALWAYS points to the exact center.
+          Build a real solid strip instead of using SVG dashes.
+          The strip follows the squircle tangent continuously:
+          straight at each edge midpoint, progressively tilted toward
+          a corner, curved through it, then progressively straight again.
         */
-        var ux = cx - edgeCenter.x;
-        var uy = cy - edgeCenter.y;
-        var mag = Math.hypot(ux, uy) || 1;
-
-        ux /= mag;
-        uy /= mag;
+        var samples = 18;
+        var half = blockThickness / 2;
+        var outer = [];
+        var inner = [];
 
         /*
-          The inside edge is perpendicular to that center-facing direction.
-          So the WHOLE flat inner face points toward screen center.
+          Keep the exaggerated squircle bend/orientation, but move the
+          whole marker outward until its midpoint sits on the actual
+          rectangular screen boundary. This preserves the long drawn-out
+          tilt while keeping the marker pushed against the edge.
         */
-        var tx = -uy;
-        var ty = ux;
+        var midDistance = start + blockLength / 2;
+        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
 
-        var halfW = width / 2;
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        var cx = w / 2;
+        var cy = h / 2;
+        var dx = mid.x - cx;
+        var dy = mid.y - cy;
 
-        /*
-          Inner face is 40px inward from the edge.
-        */
-        var innerCenter = {
-          x: edgeCenter.x + ux * depth,
-          y: edgeCenter.y + uy * depth
-        };
+        var sx = Math.abs(dx) > 0.0001 ? (w / 2) / Math.abs(dx) : Infinity;
+        var sy = Math.abs(dy) > 0.0001 ? (h / 2) / Math.abs(dy) : Infinity;
+        var scaleToEdge = Math.min(sx, sy);
 
-        var innerA = {
-          x: innerCenter.x - tx * halfW,
-          y: innerCenter.y - ty * halfW
-        };
+        var edgeX = cx + dx * scaleToEdge;
+        var edgeY = cy + dy * scaleToEdge;
+        var pushX = edgeX - mid.x;
+        var pushY = edgeY - mid.y;
 
-        var innerB = {
-          x: innerCenter.x + tx * halfW,
-          y: innerCenter.y + ty * halfW
-        };
+        for (var i = 0; i <= samples; i++) {
+          var t = i / samples;
+          var distance = start + blockLength * t;
 
-        /*
-          Extend each end of the inner face straight outward until it
-          physically hits the screen boundary. No clipping = no diamonds.
-        */
-        var outerA = hitScreenFromInside(innerA, -ux, -uy);
-        var outerB = hitScreenFromInside(innerB, -ux, -uy);
+          var o = offsetPoint(distance, -half);
+          var inn = offsetPoint(distance, half);
 
-        var parts = [
-          'M', innerA.x.toFixed(3), innerA.y.toFixed(3),
-          'L', outerA.x.toFixed(3), outerA.y.toFixed(3)
-        ];
+          outer.push({
+            x: o.x + pushX,
+            y: o.y + pushY
+          });
 
-        /*
-          When the two outer corners land on adjacent screen edges,
-          wrap the marker around the actual corner rather than cutting
-          diagonally across it.
-        */
-        var corner = cornerBetween(outerA.edge, outerB.edge);
-
-        if (corner) {
-          /*
-            Quadratic corner wrap: smooth bend toward/away from the
-            screen corner instead of a hard diamond point.
-          */
-          parts.push(
-            'Q',
-            corner.x.toFixed(3), corner.y.toFixed(3),
-            outerB.x.toFixed(3), outerB.y.toFixed(3)
-          );
-        } else {
-          parts.push(
-            'L',
-            outerB.x.toFixed(3), outerB.y.toFixed(3)
-          );
+          inner.push({
+            x: inn.x + pushX,
+            y: inn.y + pushY
+          });
         }
 
-        parts.push(
-          'L', innerB.x.toFixed(3), innerB.y.toFixed(3),
-          'L', innerA.x.toFixed(3), innerA.y.toFixed(3),
-          'Z'
-        );
+        var parts = [];
+        parts.push('M ' + outer[0].x.toFixed(3) + ' ' + outer[0].y.toFixed(3));
 
+        for (var j = 1; j < outer.length; j++) {
+          parts.push('L ' + outer[j].x.toFixed(3) + ' ' + outer[j].y.toFixed(3));
+        }
+
+        for (var k = inner.length - 1; k >= 0; k--) {
+          parts.push('L ' + inner[k].x.toFixed(3) + ' ' + inner[k].y.toFixed(3));
+        }
+
+        parts.push('Z');
         secondBlock.setAttribute('d', parts.join(' '));
       }
 
@@ -339,9 +313,9 @@
         window.location.href = 'https://soundcloud.com/';
       });
 
-      window.addEventListener('resize', setup);
+      window.addEventListener('resize', setupPath);
 
-      setup();
+      setupPath();
       update();
     })();
   </script>
