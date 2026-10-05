@@ -130,7 +130,8 @@
       var totalLength = 0;
       var blockThickness = 40;
       var blockLength = 40;
-      var endSlant = 11;
+      var endSlant = 10;
+      var edgeOffset = 4;
 
       function setClock(d) {
         var h = d.getHours();
@@ -163,8 +164,13 @@
         var h = window.innerHeight;
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
-        var half = blockThickness / 2;
-        var inset = half;
+        /*
+          The reference keeps most of the moving square outside the viewport.
+          Only its inner slice is visible on straight edges. At a corner,
+          the same square naturally becomes a curved ribbon as it follows
+          the rounded perimeter.
+        */
+        var inset = -edgeOffset;
         var radius = Math.max(38, Math.min(64, Math.min(w, h) * 0.07));
 
         guidePath.setAttribute(
@@ -221,7 +227,7 @@
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var start = (seconds / 60) * totalLength;
-        var samples = 14;
+        var samples = 22;
         var half = blockThickness / 2;
 
         /*
