@@ -3,6 +3,7 @@ import WebKit
 import UIKit
 import MediaPlayer
 import Darwin
+import ObjectiveC
 
 struct ContentView: View {
     var body: some View {
@@ -57,6 +58,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaControlsArtworkCatalog: NSObject?
     private var mediaControlsArtworkRequestKey: String?
     private var mediaControlsArtworkRequestInFlight = false
+
+    private var systemMediaModuleProvider: NSObject?
+    private var systemMediaModuleViewController: UIViewController?
 
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
@@ -187,6 +191,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         setupMediaRemote()
         setupSystemMediaControlsBridge()
+        setupEmbeddedSystemMediaModule()
         setupMediaControls()
         startArtworkUpdates()
 
@@ -260,6 +265,217 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             self.artworkDebugLabel.isHidden = false
             self.artworkDebugLabel.text = "ART DEBUG\n" + text
         }
+    }
+
+    private func setupEmbeddedSystemMediaModule() {
+        guard
+            let provider = systemClassObject(
+                "MRUMediaModuleProvider",
+                selectorName: "sharedProvider"
+            )
+        else {
+            setArtworkDebug("SYSTEM MODULE: provider unavailable")
+            return
+        }
+
+        let rootSelector = NSSelectorFromString("rootViewController")
+        guard
+            provider.responds(to: rootSelector),
+            let root = provider
+                .perform(rootSelector)?
+                .takeUnretainedValue() as? UIViewController
+        else {
+            setArtworkDebug("SYSTEM MODULE: root view controller unavailable")
+            return
+        }
+
+        systemMediaModuleProvider = provider
+        systemMediaModuleViewController = root
+
+        addChild(root)
+
+        let moduleView = root.view!
+        moduleView.frame = CGRect(
+            x: -5000,
+            y: -5000,
+            width: 500,
+            height: 500
+        )
+        moduleView.alpha = 0.01
+        moduleView.isUserInteractionEnabled = false
+        view.insertSubview(moduleView, at: 0)
+
+        root.didMove(toParent: self)
+        root.view.setNeedsLayout()
+        root.view.layoutIfNeeded()
+
+        setArtworkDebug(
+            "SYSTEM MODULE embedded\n" +
+            "Waiting for its Now Playing session..."
+        )
+    }
+
+    private func findView(
+        in root: UIView,
+        classNames: Set<String>
+    ) -> UIView? {
+        if classNames.contains(NSStringFromClass(type(of: root))) {
+            return root
+        }
+
+        for child in root.subviews {
+            if let match = findView(in: child, classNames: classNames) {
+                return match
+            }
+        }
+
+        return nil
+    }
+
+    private func objectIvar(
+        _ object: AnyObject,
+        named name: String
+    ) -> AnyObject? {
+        var currentClass: AnyClass? = object_getClass(object)
+
+        while let cls = currentClass {
+            if let ivar = class_getInstanceVariable(cls, name) {
+                return object_getIvar(object, ivar) as AnyObject?
+            }
+            currentClass = class_getSuperclass(cls)
+        }
+
+        return nil
+    }
+
+    @discardableResult
+    private func refreshArtworkFromEmbeddedSystemModule() -> Bool {
+        guard let root = systemMediaModuleViewController?.view else {
+            return false
+        }
+
+        root.setNeedsLayout()
+        root.layoutIfNeeded()
+
+        let nowPlayingNames: Set<String> = [
+            "_TtC13MediaControls33MediaControlsModuleNowPlayingView",
+            "MRUMediaControlsModuleNowPlayingView"
+        ]
+
+        guard let nowPlayingView = findView(
+            in: root,
+            classNames: nowPlayingNames
+        ) else {
+            var imageViewCount = 0
+            var largestImagePixels = 0.0
+
+            func inspect(_ view: UIView) {
+                if let imageView = view as? UIImageView,
+                   let image = imageView.image {
+                    imageViewCount += 1
+                    let pixels =
+                        image.size.width * image.scale *
+                        image.size.height * image.scale
+                    largestImagePixels = max(largestImagePixels, pixels)
+                }
+
+                for child in view.subviews {
+                    inspect(child)
+                }
+            }
+
+            inspect(root)
+
+            setArtworkDebug(
+                "SYSTEM MODULE active\n" +
+                "Now Playing view: NOT FOUND\n" +
+                "image views with images: \(imageViewCount)\n" +
+                "largest image pixels: \(Int(largestImagePixels))"
+            )
+            return true
+        }
+
+        if let image =
+            objectIvar(nowPlayingView, named: "artworkImage") as? UIImage {
+            if let data = image.jpegData(compressionQuality: 0.98) {
+                setArtwork(image, data: data)
+            } else {
+                setArtwork(image, data: nil)
+            }
+            return true
+        }
+
+        let artworkControlNames: Set<String> = [
+            "_TtC13MediaControls14ArtworkControl",
+            "MRUArtworkView"
+        ]
+
+        if let artworkControl = findView(
+            in: nowPlayingView,
+            classNames: artworkControlNames
+        ) {
+            if let artworkView =
+                objectIvar(artworkControl, named: "artworkView") as? UIView {
+                if let imageView =
+                    objectIvar(artworkView, named: "imageView") as? UIImageView,
+                   let image = imageView.image {
+                    if let data =
+                        image.jpegData(compressionQuality: 0.98) {
+                        setArtwork(image, data: data)
+                    } else {
+                        setArtwork(image, data: nil)
+                    }
+                    return true
+                }
+
+                if let imageView = artworkView as? UIImageView,
+                   let image = imageView.image {
+                    if let data =
+                        image.jpegData(compressionQuality: 0.98) {
+                        setArtwork(image, data: data)
+                    } else {
+                        setArtwork(image, data: nil)
+                    }
+                    return true
+                }
+            }
+        }
+
+        var candidates: [(UIImage, Int)] = []
+
+        func collectImages(_ view: UIView) {
+            if let imageView = view as? UIImageView,
+               let image = imageView.image {
+                let width = Int(image.size.width * image.scale)
+                let height = Int(image.size.height * image.scale)
+                if width >= 100 && height >= 100 {
+                    candidates.append((image, width * height))
+                }
+            }
+
+            for child in view.subviews {
+                collectImages(child)
+            }
+        }
+
+        collectImages(nowPlayingView)
+
+        if let best = candidates.max(by: { $0.1 < $1.1 }) {
+            if let data = best.0.jpegData(compressionQuality: 0.98) {
+                setArtwork(best.0, data: data)
+            } else {
+                setArtwork(best.0, data: nil)
+            }
+            return true
+        }
+
+        setArtworkDebug(
+            "SYSTEM MODULE active\n" +
+            "Now Playing view: FOUND\n" +
+            "artworkImage ivar: EMPTY\n" +
+            "large image candidates: \(candidates.count)"
+        )
+        return true
     }
 
     @objc(nowPlayingControllerShouldAutomaticallyUpdateResponse:)
@@ -687,8 +903,12 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // This is the same higher-level MediaControls/MPC stack used by
-        // Apple's Now Playing surfaces. Try it before raw MediaRemote.
+        // First instantiate Apple's actual MediaControls module and read the
+        // artwork image that its Now Playing view renders.
+        if refreshArtworkFromEmbeddedSystemModule() {
+            return
+        }
+
         if refreshArtworkFromSystemMediaControls() {
             return
         }
