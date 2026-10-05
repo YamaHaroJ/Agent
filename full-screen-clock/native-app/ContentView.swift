@@ -244,85 +244,405 @@ final class FullScreenClockViewController:
 
     private func openIconPicker() {
         guard UIApplication.shared.supportsAlternateIcons else {
-            let alert = UIAlertController(
+            showIconError(
                 title: "App Icons Unavailable",
-                message: "This build does not include alternate app icons.",
-                preferredStyle: .alert
+                message:
+                    "This build does not have the alternate icons registered."
             )
-            alert.addAction(UIAlertAction(title: "OK", style: .default))
-            present(alert, animated: true)
             return
         }
 
+        let picker = UIViewController()
+        picker.view.backgroundColor = UIColor(
+            red: 0.07,
+            green: 0.075,
+            blue: 0.075,
+            alpha: 1
+        )
+        picker.preferredContentSize = CGSize(width: 520, height: 255)
+
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.text = "App Icon"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 25, weight: .bold)
+        picker.view.addSubview(title)
+
+        let subtitle = UILabel()
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        subtitle.text = "Tap a preview"
+        subtitle.textColor = UIColor.white.withAlphaComponent(0.58)
+        subtitle.font = .systemFont(ofSize: 15, weight: .medium)
+        picker.view.addSubview(subtitle)
+
         let current = UIApplication.shared.alternateIconName
 
-        let sheet = UIAlertController(
-            title: "App Icon",
-            message: "Pick a style. The Home Screen icon changes immediately.",
-            preferredStyle: .actionSheet
-        )
+        let row = UIStackView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.alignment = .center
+        row.distribution = .equalSpacing
+        row.spacing = 18
+        picker.view.addSubview(row)
 
-        let choices: [(title: String, iconName: String?)] = [
-            ("Italic C", "ClockItalicC"),
-            ("Clock Wordmark", "ClockWordmark"),
-            ("Chrome C", "ClockChromeC"),
-            ("Default", nil)
+        let choices: [(String, String)] = [
+            ("ClockItalicC", "Italic C"),
+            ("ClockWordmark", "Clock"),
+            ("ClockChromeC", "Chrome C")
         ]
 
         for choice in choices {
-            let isCurrent = current == choice.iconName
-            let title = isCurrent ? "✓ " + choice.title : choice.title
+            let card = UIView()
+            card.translatesAutoresizingMaskIntoConstraints = false
 
-            sheet.addAction(
-                UIAlertAction(
-                    title: title,
-                    style: .default
-                ) { [weak self] _ in
-                    self?.setAppIcon(choice.iconName)
-                }
+            let button = UIButton(type: .custom)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.layer.cornerRadius = 22
+            button.clipsToBounds = true
+            button.layer.borderWidth =
+                current == choice.0 ? 4 : 1
+            button.layer.borderColor =
+                current == choice.0
+                    ? UIColor.white.cgColor
+                    : UIColor.white.withAlphaComponent(0.18).cgColor
+
+            button.setImage(
+                makeIconPreview(named: choice.0, size: 132),
+                for: .normal
             )
+            button.imageView?.contentMode = .scaleAspectFill
+            button.accessibilityLabel = choice.1
+
+            button.addAction(
+                UIAction { [weak self, weak picker] _ in
+                    picker?.dismiss(animated: true) {
+                        self?.setAppIcon(choice.0)
+                    }
+                },
+                for: .touchUpInside
+            )
+
+            card.addSubview(button)
+
+            let check = UIImageView(
+                image: UIImage(
+                    systemName:
+                        current == choice.0
+                            ? "checkmark.circle.fill"
+                            : "circle"
+                )
+            )
+            check.translatesAutoresizingMaskIntoConstraints = false
+            check.tintColor =
+                current == choice.0
+                    ? .white
+                    : UIColor.white.withAlphaComponent(0.32)
+            card.addSubview(check)
+
+            NSLayoutConstraint.activate([
+                card.widthAnchor.constraint(equalToConstant: 136),
+                card.heightAnchor.constraint(equalToConstant: 148),
+
+                button.topAnchor.constraint(equalTo: card.topAnchor),
+                button.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+                button.widthAnchor.constraint(equalToConstant: 132),
+                button.heightAnchor.constraint(equalToConstant: 132),
+
+                check.trailingAnchor.constraint(
+                    equalTo: button.trailingAnchor,
+                    constant: -8
+                ),
+                check.bottomAnchor.constraint(
+                    equalTo: button.bottomAnchor,
+                    constant: -8
+                ),
+                check.widthAnchor.constraint(equalToConstant: 24),
+                check.heightAnchor.constraint(equalToConstant: 24)
+            ])
+
+            row.addArrangedSubview(card)
         }
 
-        sheet.addAction(
-            UIAlertAction(
-                title: "Cancel",
-                style: .cancel
-            )
+        let defaultButton = UIButton(type: .system)
+        defaultButton.translatesAutoresizingMaskIntoConstraints = false
+        defaultButton.tintColor = .white
+        defaultButton.setTitle(
+            current == nil ? "✓ Default" : "Default",
+            for: .normal
         )
+        defaultButton.titleLabel?.font =
+            .systemFont(ofSize: 16, weight: .semibold)
+        defaultButton.addAction(
+            UIAction { [weak self, weak picker] _ in
+                picker?.dismiss(animated: true) {
+                    self?.setAppIcon(nil)
+                }
+            },
+            for: .touchUpInside
+        )
+        picker.view.addSubview(defaultButton)
 
-        if let popover = sheet.popoverPresentationController {
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(
+                equalTo: picker.view.topAnchor,
+                constant: 20
+            ),
+            title.leadingAnchor.constraint(
+                equalTo: picker.view.leadingAnchor,
+                constant: 24
+            ),
+
+            subtitle.topAnchor.constraint(
+                equalTo: title.bottomAnchor,
+                constant: 2
+            ),
+            subtitle.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+
+            row.topAnchor.constraint(
+                equalTo: subtitle.bottomAnchor,
+                constant: 17
+            ),
+            row.centerXAnchor.constraint(equalTo: picker.view.centerXAnchor),
+            row.widthAnchor.constraint(equalToConstant: 446),
+
+            defaultButton.topAnchor.constraint(
+                equalTo: row.bottomAnchor,
+                constant: 3
+            ),
+            defaultButton.centerXAnchor.constraint(
+                equalTo: picker.view.centerXAnchor
+            )
+        ])
+
+        picker.modalPresentationStyle = .popover
+
+        if let popover = picker.popoverPresentationController {
             popover.sourceView = settingsButton
             popover.sourceRect = settingsButton.bounds
+            popover.permittedArrowDirections = [.up, .right]
+            popover.backgroundColor = picker.view.backgroundColor
         }
 
-        present(sheet, animated: true)
+        present(picker, animated: true)
     }
 
-    private func setAppIcon(_ iconName: String?) {
-        UIApplication.shared.setAlternateIconName(iconName) { [weak self] error in
-            guard let error else {
+    private func makeIconPreview(
+        named iconName: String,
+        size: CGFloat
+    ) -> UIImage {
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: size, height: size)
+        )
+
+        return renderer.image { context in
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+            let path = UIBezierPath(
+                roundedRect: rect,
+                cornerRadius: size * 0.225
+            )
+            path.addClip()
+
+            UIColor.black.setFill()
+            context.fill(rect)
+
+            if iconName == "ClockChromeC" {
+                let colors = [
+                    UIColor(white: 0.98, alpha: 1).cgColor,
+                    UIColor(white: 0.55, alpha: 1).cgColor,
+                    UIColor(white: 0.92, alpha: 1).cgColor
+                ] as CFArray
+
+                let locations: [CGFloat] = [0, 0.58, 1]
+                let gradient = CGGradient(
+                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                    colors: colors,
+                    locations: locations
+                )!
+
+                let font = italicFont(
+                    size: size * 0.67,
+                    weight: .black
+                )
+                drawCenteredPreviewText(
+                    "C",
+                    rect: rect.offsetBy(dx: size * 0.018, dy: 0),
+                    font: font,
+                    fill: nil,
+                    gradient: gradient,
+                    context: context.cgContext
+                )
                 return
             }
 
+            if iconName == "ClockWordmark" {
+                drawCenteredPreviewText(
+                    "Clock",
+                    rect: rect,
+                    font: italicFont(
+                        size: size * 0.31,
+                        weight: .bold
+                    ),
+                    fill: .white,
+                    gradient: nil,
+                    context: context.cgContext
+                )
+                return
+            }
+
+            drawCenteredPreviewText(
+                "C",
+                rect: rect.offsetBy(dx: size * 0.018, dy: 0),
+                font: italicFont(
+                    size: size * 0.67,
+                    weight: .black
+                ),
+                fill: .white,
+                gradient: nil,
+                context: context.cgContext
+            )
+        }
+    }
+
+    private func italicFont(
+        size: CGFloat,
+        weight: UIFont.Weight
+    ) -> UIFont {
+        let base = UIFont.systemFont(ofSize: size, weight: weight)
+        guard
+            let descriptor =
+                base.fontDescriptor.withSymbolicTraits(.traitItalic)
+        else {
+            return base
+        }
+        return UIFont(descriptor: descriptor, size: size)
+    }
+
+    private func drawCenteredPreviewText(
+        _ text: String,
+        rect: CGRect,
+        font: UIFont,
+        fill: UIColor?,
+        gradient: CGGradient?,
+        context: CGContext
+    ) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: fill ?? UIColor.white,
+            .paragraphStyle: paragraph
+        ]
+
+        let attributed = NSAttributedString(
+            string: text,
+            attributes: attributes
+        )
+        let bounds = attributed.boundingRect(
+            with: CGSize(
+                width: rect.width * 0.95,
+                height: rect.height
+            ),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+
+        let textRect = CGRect(
+            x: rect.midX - bounds.width / 2,
+            y: rect.midY - bounds.height / 2,
+            width: bounds.width,
+            height: bounds.height
+        )
+
+        guard let gradient else {
+            attributed.draw(in: textRect)
+            return
+        }
+
+        context.saveGState()
+        UIGraphicsPushContext(context)
+
+        UIColor.white.setFill()
+        attributed.draw(in: textRect)
+        context.setBlendMode(.sourceIn)
+
+        context.drawLinearGradient(
+            gradient,
+            start: CGPoint(x: rect.midX, y: textRect.minY),
+            end: CGPoint(x: rect.midX, y: textRect.maxY),
+            options: []
+        )
+
+        UIGraphicsPopContext()
+        context.restoreGState()
+    }
+
+    private func setAppIcon(_ iconName: String?) {
+        let requestedName = iconName
+
+        UIApplication.shared.setAlternateIconName(
+            requestedName
+        ) { [weak self] error in
             DispatchQueue.main.async {
                 guard let self else {
                     return
                 }
 
-                let alert = UIAlertController(
-                    title: "Couldn't Change Icon",
-                    message: error.localizedDescription,
-                    preferredStyle: .alert
-                )
-                alert.addAction(
-                    UIAlertAction(
-                        title: "OK",
-                        style: .default
+                if let error {
+                    self.showIconError(
+                        title: "Couldn't Change Icon",
+                        message:
+                            error.localizedDescription +
+                            "\n\nThe icon is registered in the app bundle, " +
+                            "but iPadOS rejected the switch."
                     )
-                )
-                self.present(alert, animated: true)
+                    return
+                }
+
+                // iPadOS should update this immediately. Verify it so a silent
+                // failure cannot look like success.
+                DispatchQueue.main.asyncAfter(
+                    deadline: .now() + 0.35
+                ) {
+                    let actual =
+                        UIApplication.shared.alternateIconName
+
+                    if actual != requestedName {
+                        self.showIconError(
+                            title: "Icon Didn't Switch",
+                            message:
+                                "iPadOS accepted the request but still reports " +
+                                "the previous icon. Reopen Clock and try once more."
+                        )
+                    }
+                }
             }
         }
+    }
+
+    private func showIconError(
+        title: String,
+        message: String
+    ) {
+        guard presentedViewController == nil else {
+            dismiss(animated: true) { [weak self] in
+                self?.showIconError(title: title, message: message)
+            }
+            return
+        }
+
+        let alert = UIAlertController(
+            title: title,
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(
+            UIAlertAction(
+                title: "OK",
+                style: .default
+            )
+        )
+        present(alert, animated: true)
     }
 
     private func openPhotoPicker() {
