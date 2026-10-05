@@ -50,8 +50,7 @@
       pointer-events: none;
     }
 
-    #physical-path,
-    #angle-path {
+    #physical-path {
       fill: none;
       stroke: none;
     }
@@ -125,7 +124,6 @@
       </defs>
 
       <path id="physical-path"></path>
-      <path id="angle-path"></path>
 
       <g clip-path="url(#screen-clip)">
         <path id="second-block"></path>
@@ -142,13 +140,13 @@
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
       var physicalPath = document.getElementById('physical-path');
-      var anglePath = document.getElementById('angle-path');
       var secondBlock = document.getElementById('second-block');
       var clipRect = document.getElementById('screen-clip-rect');
 
       var physicalLength = 0;
-      var angleLength = 0;
       var blockSize = 40;
+      var screenW = 0;
+      var screenH = 0;
 
       function setClock(d) {
         var h = d.getHours();
@@ -159,39 +157,6 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      /*
-        This is ONLY used for the marker's angle.
-        n = 2.6 keeps the long, exaggerated tilt you liked.
-      */
-      function squirclePath(w, h) {
-        var cx = w / 2;
-        var cy = h / 2;
-        var a = w / 2;
-        var b = h / 2;
-        var n = 2.6;
-        var power = 2 / n;
-        var samples = 900;
-        var parts = [];
-
-        for (var i = 0; i <= samples; i++) {
-          var t = -Math.PI / 2 + (Math.PI * 2 * i / samples);
-          var c = Math.cos(t);
-          var s = Math.sin(t);
-
-          var x = cx + a * Math.sign(c) * Math.pow(Math.abs(c), power);
-          var y = cy + b * Math.sign(s) * Math.pow(Math.abs(s), power);
-
-          parts.push((i === 0 ? 'M ' : 'L ') + x.toFixed(3) + ' ' + y.toFixed(3));
-        }
-
-        parts.push('Z');
-        return parts.join(' ');
-      }
-
-      /*
-        This is the ACTUAL position path.
-        It hugs the real screen edge and uses a clean rounded corner.
-      */
       function roundedEdgePath(w, h, r) {
         var cx = w / 2;
 
@@ -211,90 +176,99 @@
       }
 
       function setupPaths() {
-        var w = window.innerWidth;
-        var h = window.innerHeight;
-        var cornerRadius = Math.max(34, Math.min(52, Math.min(w, h) * 0.05));
+        screenW = window.innerWidth;
+        screenH = window.innerHeight;
 
-        svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        var cornerRadius = Math.max(
+          34,
+          Math.min(52, Math.min(screenW, screenH) * 0.05)
+        );
+
+        svg.setAttribute('viewBox', '0 0 ' + screenW + ' ' + screenH);
 
         clipRect.setAttribute('x', '0');
         clipRect.setAttribute('y', '0');
-        clipRect.setAttribute('width', w);
-        clipRect.setAttribute('height', h);
+        clipRect.setAttribute('width', screenW);
+        clipRect.setAttribute('height', screenH);
         clipRect.setAttribute('rx', cornerRadius);
         clipRect.setAttribute('ry', cornerRadius);
 
-        physicalPath.setAttribute('d', roundedEdgePath(w, h, cornerRadius));
-        anglePath.setAttribute('d', squirclePath(w, h));
+        physicalPath.setAttribute(
+          'd',
+          roundedEdgePath(screenW, screenH, cornerRadius)
+        );
 
         physicalLength = physicalPath.getTotalLength();
-        angleLength = anglePath.getTotalLength();
 
         drawSecondBlock(new Date());
       }
 
-      function wrap(v, length) {
-        if (!length) return 0;
-        v %= length;
-        if (v < 0) v += length;
-        return v;
-      }
-
-      function tangentAt(path, length, distance) {
-        var delta = 0.8;
-        var before = path.getPointAtLength(wrap(distance - delta, length));
-        var after = path.getPointAtLength(wrap(distance + delta, length));
-
-        var tx = after.x - before.x;
-        var ty = after.y - before.y;
-        var mag = Math.hypot(tx, ty) || 1;
-
-        return {
-          x: tx / mag,
-          y: ty / mag
-        };
-      }
-
       function drawSecondBlock(d) {
-        if (!physicalLength || !angleLength) return;
+        if (!physicalLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var progress = seconds / 60;
+        var distance = progress * physicalLength;
+
+        var center = physicalPath.getPointAtLength(distance);
 
         /*
-          Position follows the clean rounded screen edge.
-          Angle follows the exaggerated squircle.
-          This keeps the long drawn-out tilt without letting the marker
-          drift inward or warp around the corners.
+          Critical rule:
+          the INNER face of the square always points at the exact
+          center of the screen.
+
+          That makes the marker:
+          - perfectly straight only at edge midpoints
+          - immediately tilt as it leaves a midpoint
+          - progressively tilt more toward each corner
+          - stay correctly oriented through the corner
         */
-        var centerDistance = progress * physicalLength;
-        var angleDistance = progress * angleLength;
+        var cx = screenW / 2;
+        var cy = screenH / 2;
 
-        var center = physicalPath.getPointAtLength(centerDistance);
-        var tangent = tangentAt(anglePath, angleLength, angleDistance);
+        var inwardX = cx - center.x;
+        var inwardY = cy - center.y;
+        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
 
-        var nx = -tangent.y;
-        var ny = tangent.x;
+        inwardX /= inwardMag;
+        inwardY /= inwardMag;
+
+        /*
+          Tangent is perpendicular to the inward normal.
+          The square's inner edge lies along this tangent.
+        */
+        var tangentX = -inwardY;
+        var tangentY = inwardX;
+
         var half = blockSize / 2;
 
+        /*
+          Put the square center exactly on the physical screen boundary.
+          Half of the square is therefore outside the viewport and clipped.
+        */
+        var outerCenterX = center.x - inwardX * half;
+        var outerCenterY = center.y - inwardY * half;
+        var innerCenterX = center.x + inwardX * half;
+        var innerCenterY = center.y + inwardY * half;
+
         var p1 = {
-          x: center.x - tangent.x * half - nx * half,
-          y: center.y - tangent.y * half - ny * half
+          x: outerCenterX - tangentX * half,
+          y: outerCenterY - tangentY * half
         };
 
         var p2 = {
-          x: center.x + tangent.x * half - nx * half,
-          y: center.y + tangent.y * half - ny * half
+          x: outerCenterX + tangentX * half,
+          y: outerCenterY + tangentY * half
         };
 
         var p3 = {
-          x: center.x + tangent.x * half + nx * half,
-          y: center.y + tangent.y * half + ny * half
+          x: innerCenterX + tangentX * half,
+          y: innerCenterY + tangentY * half
         };
 
         var p4 = {
-          x: center.x - tangent.x * half + nx * half,
-          y: center.y - tangent.y * half + ny * half
+          x: innerCenterX - tangentX * half,
+          y: innerCenterY - tangentY * half
         };
 
         secondBlock.setAttribute(
