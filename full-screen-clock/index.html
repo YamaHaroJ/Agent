@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="Clock" />
   <meta name="theme-color" content="#000000" />
   <title>Full Screen Clock</title>
+
   <style>
     * { box-sizing: border-box; }
 
@@ -18,7 +19,8 @@
       overflow: hidden;
       background: #000;
       color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                   "Helvetica Neue", Arial, sans-serif;
       touch-action: manipulation;
       -webkit-user-select: none;
       user-select: none;
@@ -34,8 +36,8 @@
       inset: 0;
       width: 100dvw;
       height: 100dvh;
-      background: #000;
       overflow: hidden;
+      background: #000;
     }
 
     #edge-svg {
@@ -43,18 +45,17 @@
       inset: 0;
       width: 100%;
       height: 100%;
+      overflow: hidden;
       z-index: 1;
       pointer-events: none;
     }
 
-    #guide-path {
+    #second-path {
       fill: none;
-      stroke: none;
-    }
-
-    #second-block {
-      fill: #fff;
-      stroke: none;
+      stroke: #fff;
+      stroke-width: 40;
+      stroke-linecap: butt;
+      stroke-linejoin: round;
       pointer-events: none;
     }
 
@@ -64,7 +65,8 @@
       top: 50%;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                   "Helvetica Neue", Arial, sans-serif;
       font-weight: 700;
       font-style: italic;
       transform: translate(-50%, -50%) skewX(-10deg);
@@ -100,6 +102,7 @@
 
     @media (orientation: landscape) {
       #clock { font-size: min(13vw, 30vh); }
+
       #soundcloud {
         bottom: calc(12px + env(safe-area-inset-bottom));
         padding: 10px 16px;
@@ -108,11 +111,11 @@
     }
   </style>
 </head>
+
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <path id="guide-path"></path>
-      <path id="second-block"></path>
+      <path id="second-path"></path>
     </svg>
 
     <div id="clock">12:00 AM</div>
@@ -124,36 +127,34 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var guidePath = document.getElementById('guide-path');
-      var secondBlock = document.getElementById('second-block');
+      var secondPath = document.getElementById('second-path');
 
       var totalLength = 0;
-      var blockThickness = 40;
-      var blockLength = 40;
-      var endSlant = 10;
-      var edgeOffset = 4;
+      var blockSize = 40;
 
       function setClock(d) {
         var h = d.getHours();
         var m = String(d.getMinutes()).padStart(2, '0');
         var suffix = h >= 12 ? 'PM' : 'AM';
+
         h = h % 12 || 12;
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      function roundedRectPath(x, y, w, h, r) {
-        var cx = x + (w / 2);
+      function roundedScreenPath(w, h, r) {
+        var cx = w / 2;
 
+        /* Start at exact top center: this is the 00-second position. */
         return [
-          'M', cx, y,
-          'H', x + w - r,
-          'Q', x + w, y, x + w, y + r,
-          'V', y + h - r,
-          'Q', x + w, y + h, x + w - r, y + h,
-          'H', x + r,
-          'Q', x, y + h, x, y + h - r,
-          'V', y + r,
-          'Q', x, y, x + r, y,
+          'M', cx, 0,
+          'H', w - r,
+          'Q', w, 0, w, r,
+          'V', h - r,
+          'Q', w, h, w - r, h,
+          'H', r,
+          'Q', 0, h, 0, h - r,
+          'V', r,
+          'Q', 0, 0, r, 0,
           'H', cx,
           'Z'
         ].join(' ');
@@ -162,113 +163,48 @@
       function setupPath() {
         var w = window.innerWidth;
         var h = window.innerHeight;
+
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
 
         /*
-          The reference keeps most of the moving square outside the viewport.
-          Only its inner slice is visible on straight edges. At a corner,
-          the same square naturally becomes a curved ribbon as it follows
-          the rounded perimeter.
+          The path runs directly on the viewport edge.
+          Because the stroke is 40px thick, exactly half of the
+          conceptual 40×40 block sits outside the screen on straight edges.
+          At corners, the same block becomes a genuine curved arc.
         */
-        var inset = -edgeOffset;
-        var radius = Math.max(38, Math.min(64, Math.min(w, h) * 0.07));
-
-        guidePath.setAttribute(
-          'd',
-          roundedRectPath(
-            inset,
-            inset,
-            w - inset * 2,
-            h - inset * 2,
-            radius
-          )
+        var radius = Math.max(
+          56,
+          Math.min(86, Math.min(w, h) * 0.085)
         );
 
-        totalLength = guidePath.getTotalLength();
+        secondPath.setAttribute('d', roundedScreenPath(w, h, radius));
+
+        totalLength = secondPath.getTotalLength();
+
+        /*
+          One 40px dash around one closed perimeter.
+          Pattern length equals the perimeter so 59 → 00 stays continuous.
+        */
+        secondPath.style.strokeDasharray =
+          blockSize + ' ' + (totalLength - blockSize);
       }
 
-      function wrapLength(v) {
-        if (!totalLength) return 0;
-        v %= totalLength;
-        if (v < 0) v += totalLength;
-        return v;
-      }
-
-      function pointAndNormal(length) {
-        var delta = 0.6;
-        var s = wrapLength(length);
-        var before = guidePath.getPointAtLength(wrapLength(s - delta));
-        var after = guidePath.getPointAtLength(wrapLength(s + delta));
-        var p = guidePath.getPointAtLength(s);
-
-        var tx = after.x - before.x;
-        var ty = after.y - before.y;
-        var mag = Math.hypot(tx, ty) || 1;
-        tx /= mag;
-        ty /= mag;
-
-        /* Inward normal for our clockwise screen path. */
-        var nx = -ty;
-        var ny = tx;
-
-        return { x: p.x, y: p.y, nx: nx, ny: ny };
-      }
-
-      function boundaryPoint(length, inwardAmount) {
-        var q = pointAndNormal(length);
-        return {
-          x: q.x + q.nx * inwardAmount,
-          y: q.y + q.ny * inwardAmount
-        };
-      }
-
-      function setSegment(d) {
+      function setSecondBlock(d) {
         if (!totalLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var start = (seconds / 60) * totalLength;
-        var samples = 22;
-        var half = blockThickness / 2;
+        var progress = seconds / 60;
 
-        /*
-          The outer edge is shifted slightly forward relative to the inner edge.
-          That gives the block the same slanted/raked ends as the reference,
-          while both long edges physically follow the rounded screen perimeter.
-        */
-        var outerStart = start + endSlant;
-        var innerStart = start;
-        var outer = [];
-        var inner = [];
-
-        for (var i = 0; i <= samples; i++) {
-          var t = i / samples;
-          outer.push(
-            boundaryPoint(outerStart + blockLength * t, -half)
-          );
-          inner.push(
-            boundaryPoint(innerStart + blockLength * t, half)
-          );
-        }
-
-        var parts = [];
-        parts.push('M ' + outer[0].x + ' ' + outer[0].y);
-
-        for (var j = 1; j < outer.length; j++) {
-          parts.push('L ' + outer[j].x + ' ' + outer[j].y);
-        }
-
-        for (var k = inner.length - 1; k >= 0; k--) {
-          parts.push('L ' + inner[k].x + ' ' + inner[k].y);
-        }
-
-        parts.push('Z');
-        secondBlock.setAttribute('d', parts.join(' '));
+        secondPath.style.strokeDashoffset =
+          String(-(progress * totalLength));
       }
 
       function update() {
         var now = new Date();
+
         setClock(now);
-        setSegment(now);
+        setSecondBlock(now);
+
         requestAnimationFrame(update);
       }
 
@@ -277,6 +213,7 @@
       });
 
       window.addEventListener('resize', setupPath);
+
       setupPath();
       update();
     })();
