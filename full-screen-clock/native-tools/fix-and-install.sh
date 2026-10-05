@@ -107,6 +107,19 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
+INFO_PLIST="$APP_PATH/Info.plist"
+PLIST_DUMP="$(plutil -p "$INFO_PLIST" 2>/dev/null || true)"
+
+for icon_name in ClockItalicC ClockWordmark ClockChromeC; do
+  if ! printf '%s\n' "$PLIST_DUMP" | grep -q "$icon_name"; then
+    echo "ERROR: Built app did not register alternate icon $icon_name." | tee -a "$LOG"
+    echo "The installer will not install a broken icon build." | tee -a "$LOG"
+    exit 1
+  fi
+done
+
+echo "Confirmed all 3 alternate icons are registered in the built app." | tee -a "$LOG"
+
 echo "5/6 Installing Clock on $DEVICE_NAME..." | tee -a "$LOG"
 xcrun devicectl device install app --device "$DEVICE_NAME" "$APP_PATH" 2>&1 | tee -a "$LOG"
 
