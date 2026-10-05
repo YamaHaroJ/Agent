@@ -156,6 +156,7 @@
         var blockThickness = 40;
         var inset = blockThickness / 2;
         var radius = Math.max(38, Math.min(64, Math.min(w, h) * 0.07));
+
         var d = roundedRectPath(
           inset,
           inset,
@@ -168,11 +169,17 @@
 
         totalLength = secondPath.getTotalLength();
 
-        /* Keep the moving piece square on straight edges: 40px × 40px. */
+        /* 40px long × 40px thick = square on straight edges. */
         segmentLength = blockThickness;
 
+        /*
+          The dash pattern is exactly one full perimeter long.
+          That means when the square crosses the 59→00 seam,
+          the part leaving the end continues immediately at the start
+          instead of disappearing and popping back in.
+        */
         secondPath.style.strokeDasharray =
-          segmentLength + ' ' + (totalLength + segmentLength);
+          segmentLength + ' ' + (totalLength - segmentLength);
       }
 
       function setSegment(d) {
