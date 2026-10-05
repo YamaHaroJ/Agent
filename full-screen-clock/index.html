@@ -386,11 +386,17 @@
           Near a corner, move that unchanged edge farther inward only
           enough to keep all 40px visible.
         */
-        var innerDepth = blockThickness;
+        /*
+          Keep the fixed 40px inner edge much closer to the perimeter.
+          Only about half of the original 40px depth is visible on the
+          straight edges, matching the edge-hugging look more closely.
+        */
+        var preferredDepth = blockThickness * 0.5;
+        var innerDepth = preferredDepth;
         var fixedEdge = innerEdgeAt(innerDepth);
 
         if (!fullyInside(fixedEdge)) {
-          var low = blockThickness;
+          var low = preferredDepth;
           var high = Math.hypot(w, h);
 
           for (var n = 0; n < 16; n++) {
