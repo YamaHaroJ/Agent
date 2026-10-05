@@ -43,6 +43,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteGetNowPlayingArtwork: MRMediaRemoteGetNowPlayingArtwork?
     private var mediaRemoteGetNowPlayingClient: MRMediaRemoteGetNowPlayingClient?
     private var mediaRemoteGetNowPlayingClients: MRMediaRemoteGetNowPlayingClients?
+    private var mediaRemoteGetClientForOrigin: MRMediaRemoteGetNowPlayingClientForOrigin?
     private var mediaRemoteGetPlayerForClient: MRMediaRemoteGetNowPlayingPlayerForClient?
     private var mediaRemoteGetInfoForPlayerSimple: MRMediaRemoteGetNowPlayingInfoForPlayerSimple?
     private var mediaRemoteGetInfoForClient: MRMediaRemoteGetNowPlayingInfoForClient?
@@ -89,6 +90,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         @convention(c) (
             DispatchQueue,
             @escaping @convention(block) (AnyObject?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingClientForOrigin =
+        @convention(c) (
+            UnsafeRawPointer?,
+            DispatchQueue,
+            @escaping @convention(block) (AnyObject?, AnyObject?) -> Void
         ) -> Void
 
     private typealias MRMediaRemoteGetNowPlayingClients =
@@ -892,6 +900,16 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let getClientForOriginSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingClientForOrigin"
+        ) {
+            mediaRemoteGetClientForOrigin = unsafeBitCast(
+                getClientForOriginSymbol,
+                to: MRMediaRemoteGetNowPlayingClientForOrigin.self
+            )
+        }
+
         if let getClientsSymbol = dlsym(
             handle,
             "MRMediaRemoteGetNowPlayingClients"
@@ -1061,6 +1079,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             "MediaRemote loaded\n" +
             "direct artwork: \(mediaRemoteGetNowPlayingArtwork != nil)\n" +
             "now-playing client: \(mediaRemoteGetNowPlayingClient != nil)\n" +
+            "client-for-origin: \(mediaRemoteGetClientForOrigin != nil)\n" +
             "all clients: \(mediaRemoteGetNowPlayingClients != nil)\n" +
             "player-for-client: \(mediaRemoteGetPlayerForClient != nil)\n" +
             "player info(simple): \(mediaRemoteGetInfoForPlayerSimple != nil)\n" +
@@ -1119,6 +1138,114 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryOriginSpecificNowPlayingClient() -> Bool {
+        guard
+            let getLocalOrigin = mediaRemoteGetLocalOrigin,
+            let getClientForOrigin = mediaRemoteGetClientForOrigin,
+            let getInfoForClient = mediaRemoteGetInfoForClient
+        else {
+            return false
+        }
+
+        guard let origin = getLocalOrigin() else {
+            setArtworkDebug(
+                "ORIGIN CLIENT ROUTE\n" +
+                "local origin: NIL"
+            )
+            return true
+        }
+
+        getClientForOrigin(
+            origin,
+            DispatchQueue.main
+        ) { [weak self] client, error in
+            guard let self else { return }
+
+            let errorString: String
+            if let error {
+                errorString = String(describing: error)
+            } else {
+                errorString = "<nil>"
+            }
+
+            guard let client else {
+                self.setArtworkDebug(
+                    "ORIGIN CLIENT ROUTE\n" +
+                    "client: NIL\n" +
+                    "error: \(errorString)"
+                )
+                return
+            }
+
+            var bundle = "<unknown>"
+            if let getBundleID = self.mediaRemoteClientBundleID,
+               let unmanaged = getBundleID(client) {
+                bundle = unmanaged.takeUnretainedValue() as String
+            } else if let value =
+                (client as? NSObject)?.value(forKey: "bundleIdentifier")
+                    as? String {
+                bundle = value
+            }
+
+            getInfoForClient(
+                client,
+                origin,
+                true,
+                DispatchQueue.main
+            ) { [weak self] infoObject in
+                guard let self else { return }
+
+                let info = infoObject as? [String: Any] ?? [:]
+                let title =
+                    info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+                let artist =
+                    info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+
+                var artworkData =
+                    info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+
+                if artworkData == nil {
+                    for value in info.values {
+                        if let data = value as? Data,
+                           UIImage(data: data) != nil {
+                            artworkData = data
+                            break
+                        }
+                    }
+                }
+
+                self.setArtworkDebug(
+                    "ORIGIN CLIENT ROUTE\n" +
+                    "client: YES\n" +
+                    "bundle: \(bundle)\n" +
+                    "error: \(errorString)\n" +
+                    "keys: \(info.count)\n" +
+                    "title: \(title ?? "<nil>")\n" +
+                    "artist: \(artist ?? "<nil>")\n" +
+                    "artwork bytes: \(artworkData?.count ?? 0)"
+                )
+
+                if let artworkData,
+                   let image = UIImage(data: artworkData) {
+                    self.setArtwork(image, data: artworkData)
+                    return
+                }
+
+                if title != nil || artist != nil {
+                    self.fetchArtworkFallback(
+                        title: title,
+                        artist: artist,
+                        album:
+                            info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String
+                    )
+                }
+            }
+        }
+
+        return true
     }
 
     @discardableResult
