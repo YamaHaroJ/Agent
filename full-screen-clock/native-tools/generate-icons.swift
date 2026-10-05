@@ -103,7 +103,7 @@ func makeMaster(kind: String) -> NSImage {
 
     case "ClockWordmark":
         NSColor.black.setFill()
-        canvas.fill()
+        NSBezierPath(rect: canvas).fill()
         drawTextCentered(
             "Clock",
             in: canvas.offsetBy(dx: 0, dy: 0),
@@ -113,7 +113,7 @@ func makeMaster(kind: String) -> NSImage {
 
     default:
         NSColor.black.setFill()
-        canvas.fill()
+        NSBezierPath(rect: canvas).fill()
         drawTextCentered(
             "C",
             in: canvas.offsetBy(dx: 12, dy: 2),
@@ -132,12 +132,12 @@ func pngData(_ image: NSImage, pixels: Int) -> Data? {
         pixelsWide: pixels,
         pixelsHigh: pixels,
         bitsPerSample: 8,
-        samplesPerPixel: 4,
+        samplesPerPixel: 3,
         hasAlpha: false,
         isPlanar: false,
         colorSpaceName: .deviceRGB,
         bytesPerRow: 0,
-        bitsPerPixel: 0
+        bitsPerPixel: 24
     )!
 
     rep.size = NSSize(width: CGFloat(pixels), height: CGFloat(pixels))
