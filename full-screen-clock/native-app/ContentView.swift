@@ -306,12 +306,18 @@ final class FullScreenClockViewController:
                     ? UIColor.white.cgColor
                     : UIColor.white.withAlphaComponent(0.18).cgColor
 
+            button.backgroundColor = .black
             button.setImage(
-                makeIconPreview(named: choice.0, size: 132),
+                makeIconPreviewPlaceholder(size: 132),
                 for: .normal
             )
             button.imageView?.contentMode = .scaleAspectFill
             button.accessibilityLabel = choice.1
+
+            loadExactIconPreview(
+                named: choice.0,
+                into: button
+            )
 
             button.addAction(
                 UIAction { [weak self, weak picker] _ in
@@ -426,14 +432,9 @@ final class FullScreenClockViewController:
         present(picker, animated: true)
     }
 
-    private func makeIconPreview(
-        named iconName: String,
+    private func makeIconPreviewPlaceholder(
         size: CGFloat
     ) -> UIImage {
-        if let exact = UIImage(named: iconName + "Preview") {
-            return exact
-        }
-
         let renderer = UIGraphicsImageRenderer(
             size: CGSize(width: size, height: size)
         )
@@ -443,7 +444,72 @@ final class FullScreenClockViewController:
             context.fill(
                 CGRect(x: 0, y: 0, width: size, height: size)
             )
+
+            if let symbol = UIImage(
+                systemName: "arrow.down.circle"
+            )?.withTintColor(
+                UIColor.white.withAlphaComponent(0.28),
+                renderingMode: .alwaysOriginal
+            ) {
+                let symbolSize = size * 0.24
+                symbol.draw(
+                    in: CGRect(
+                        x: (size - symbolSize) / 2,
+                        y: (size - symbolSize) / 2,
+                        width: symbolSize,
+                        height: symbolSize
+                    )
+                )
+            }
         }
+    }
+
+    private func loadExactIconPreview(
+        named iconName: String,
+        into button: UIButton
+    ) {
+        let encodedName =
+            iconName.addingPercentEncoding(
+                withAllowedCharacters: .urlPathAllowed
+            ) ?? iconName
+
+        guard let url = URL(
+            string:
+                "https://raw.githubusercontent.com/" +
+                "YamaHaroJ/Agent/main/full-screen-clock/" +
+                "native-assets/\(encodedName)_master.jpg" +
+                "?v=\(Int(Date().timeIntervalSince1970))"
+        ) else {
+            return
+        }
+
+        var request = URLRequest(
+            url: url,
+            cachePolicy: .reloadIgnoringLocalAndRemoteCacheData,
+            timeoutInterval: 10
+        )
+        request.setValue(
+            "no-cache",
+            forHTTPHeaderField: "Cache-Control"
+        )
+
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            guard
+                let http = response as? HTTPURLResponse,
+                http.statusCode == 200,
+                let data,
+                let image = UIImage(data: data)
+            else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                button.setImage(
+                    image.withRenderingMode(.alwaysOriginal),
+                    for: .normal
+                )
+            }
+        }.resume()
     }
 
     private func setAppIcon(_ iconName: String?) {
