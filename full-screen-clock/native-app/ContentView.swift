@@ -37,14 +37,20 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
     private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
+    private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
     private var artworkTimer: Timer?
     private var lastArtworkData: Data?
+    private var lastArtworkLookupKey: String?
+    private var artworkLookupInFlight = false
 
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
 
     private typealias MRMediaRemoteGetNowPlayingInfo =
-        @convention(c) (DispatchQueue, @escaping ([String: Any]?) -> Void) -> Void
+        @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+
+    private typealias MRMediaRemoteRegisterForNowPlayingNotifications =
+        @convention(c) (DispatchQueue) -> Void
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -190,6 +196,17 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 to: MRMediaRemoteGetNowPlayingInfo.self
             )
         }
+
+        if let registerSymbol = dlsym(
+            handle,
+            "MRMediaRemoteRegisterForNowPlayingNotifications"
+        ) {
+            mediaRemoteRegisterForNotifications = unsafeBitCast(
+                registerSymbol,
+                to: MRMediaRemoteRegisterForNowPlayingNotifications.self
+            )
+            mediaRemoteRegisterForNotifications?(DispatchQueue.main)
+        }
     }
 
     private func startArtworkUpdates() {
@@ -211,11 +228,6 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         getNowPlayingInfo(DispatchQueue.main) { [weak self] info in
             guard let self else { return }
 
-            guard let info else {
-                self.setArtwork(nil, data: nil)
-                return
-            }
-
             var artworkData =
                 info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
 
@@ -229,15 +241,177 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 }
             }
 
+            if let artworkData,
+               let image = UIImage(data: artworkData) {
+                self.lastArtworkLookupKey = nil
+                self.setArtwork(image, data: artworkData)
+                return
+            }
+
+            let title =
+                info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+            let artist =
+                info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+            let album =
+                info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String
+
+            self.fetchArtworkFallback(
+                title: title,
+                artist: artist,
+                album: album
+            )
+        }
+    }
+
+    private func fetchArtworkFallback(
+        title: String?,
+        artist: String?,
+        album: String?
+    ) {
+        let cleanTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanArtist = artist?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanAlbum = album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard !cleanTitle.isEmpty || !cleanArtist.isEmpty else {
+            return
+        }
+
+        let lookupKey = "\(cleanTitle)|\(cleanArtist)|\(cleanAlbum)"
+            .lowercased()
+
+        guard lookupKey != lastArtworkLookupKey || artworkView.image == nil else {
+            return
+        }
+
+        guard !artworkLookupInFlight else {
+            return
+        }
+
+        artworkLookupInFlight = true
+        lastArtworkLookupKey = lookupKey
+
+        var components = URLComponents(
+            string: "https://itunes.apple.com/search"
+        )!
+
+        let term = [cleanArtist, cleanTitle]
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+
+        components.queryItems = [
+            URLQueryItem(name: "term", value: term),
+            URLQueryItem(name: "entity", value: "song"),
+            URLQueryItem(name: "limit", value: "10")
+        ]
+
+        guard let url = components.url else {
+            artworkLookupInFlight = false
+            return
+        }
+
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+            guard let self else { return }
+
+            defer {
+                DispatchQueue.main.async {
+                    self.artworkLookupInFlight = false
+                }
+            }
+
             guard
-                let artworkData,
-                let image = UIImage(data: artworkData)
+                let data,
+                let json = try? JSONSerialization.jsonObject(with: data)
+                    as? [String: Any],
+                let results = json["results"] as? [[String: Any]],
+                !results.isEmpty
             else {
                 return
             }
 
-            self.setArtwork(image, data: artworkData)
-        }
+            func normalized(_ value: String?) -> String {
+                (value ?? "")
+                    .lowercased()
+                    .replacingOccurrences(
+                        of: "[^a-z0-9]+",
+                        with: " ",
+                        options: .regularExpression
+                    )
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+
+            let targetTitle = normalized(cleanTitle)
+            let targetArtist = normalized(cleanArtist)
+
+            let best = results.max { lhs, rhs in
+                func score(_ item: [String: Any]) -> Int {
+                    let itemTitle = normalized(item["trackName"] as? String)
+                    let itemArtist = normalized(item["artistName"] as? String)
+                    let itemAlbum = normalized(item["collectionName"] as? String)
+
+                    var value = 0
+                    if !targetTitle.isEmpty && itemTitle == targetTitle {
+                        value += 8
+                    } else if !targetTitle.isEmpty &&
+                                (itemTitle.contains(targetTitle) ||
+                                 targetTitle.contains(itemTitle)) {
+                        value += 4
+                    }
+
+                    if !targetArtist.isEmpty && itemArtist == targetArtist {
+                        value += 6
+                    } else if !targetArtist.isEmpty &&
+                                (itemArtist.contains(targetArtist) ||
+                                 targetArtist.contains(itemArtist)) {
+                        value += 3
+                    }
+
+                    if !cleanAlbum.isEmpty &&
+                       itemAlbum == normalized(cleanAlbum) {
+                        value += 2
+                    }
+
+                    return value
+                }
+
+                return score(lhs) < score(rhs)
+            }
+
+            guard
+                let artworkString =
+                    best?["artworkUrl100"] as? String
+            else {
+                return
+            }
+
+            let largeArtworkString = artworkString
+                .replacingOccurrences(
+                    of: "100x100bb",
+                    with: "1200x1200bb"
+                )
+
+            guard let artworkURL = URL(string: largeArtworkString) else {
+                return
+            }
+
+            var request = URLRequest(
+                url: artworkURL,
+                cachePolicy: .reloadIgnoringLocalCacheData,
+                timeoutInterval: 20
+            )
+            request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+            URLSession.shared.dataTask(with: request) { [weak self] imageData, _, _ in
+                guard
+                    let self,
+                    let imageData,
+                    let image = UIImage(data: imageData)
+                else {
+                    return
+                }
+
+                self.setArtwork(image, data: imageData)
+            }.resume()
+        }.resume()
     }
 
     private func setArtwork(_ image: UIImage?, data: Data?) {
