@@ -50,11 +50,6 @@
       pointer-events: none;
     }
 
-    #physical-path {
-      fill: none;
-      stroke: none;
-    }
-
     #second-block {
       fill: #fff;
       stroke: none;
@@ -117,17 +112,7 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <defs>
-        <clipPath id="screen-clip">
-          <rect id="screen-clip-rect"></rect>
-        </clipPath>
-      </defs>
-
-      <path id="physical-path"></path>
-
-      <g clip-path="url(#screen-clip)">
-        <path id="second-block"></path>
-      </g>
+      <path id="second-block"></path>
     </svg>
 
     <div id="clock">12:00 AM</div>
@@ -139,14 +124,13 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var physicalPath = document.getElementById('physical-path');
       var secondBlock = document.getElementById('second-block');
-      var clipRect = document.getElementById('screen-clip-rect');
 
-      var physicalLength = 0;
-      var blockSize = 40;
       var screenW = 0;
       var screenH = 0;
+
+      var blockDepth = 40;
+      var blockWidth = 40;
 
       function setClock(d) {
         var h = d.getHours();
@@ -157,130 +141,148 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      function roundedEdgePath(w, h, r) {
-        var cx = w / 2;
-
-        return [
-          'M', cx, 0,
-          'H', w - r,
-          'Q', w, 0, w, r,
-          'V', h - r,
-          'Q', w, h, w - r, h,
-          'H', r,
-          'Q', 0, h, 0, h - r,
-          'V', r,
-          'Q', 0, 0, r, 0,
-          'H', cx,
-          'Z'
-        ].join(' ');
-      }
-
-      function setupPaths() {
+      function setup() {
         screenW = window.innerWidth;
         screenH = window.innerHeight;
 
-        var cornerRadius = Math.max(
-          34,
-          Math.min(52, Math.min(screenW, screenH) * 0.05)
-        );
-
         svg.setAttribute('viewBox', '0 0 ' + screenW + ' ' + screenH);
-
-        clipRect.setAttribute('x', '0');
-        clipRect.setAttribute('y', '0');
-        clipRect.setAttribute('width', screenW);
-        clipRect.setAttribute('height', screenH);
-        clipRect.setAttribute('rx', cornerRadius);
-        clipRect.setAttribute('ry', cornerRadius);
-
-        physicalPath.setAttribute(
-          'd',
-          roundedEdgePath(screenW, screenH, cornerRadius)
-        );
-
-        physicalLength = physicalPath.getTotalLength();
-
         drawSecondBlock(new Date());
       }
 
+      /*
+        One minute is split into 8 equal movements:
+
+        00.0  top-middle
+        07.5  top-right corner
+        15.0  right-middle
+        22.5  bottom-right corner
+        30.0  bottom-middle
+        37.5  bottom-left corner
+        45.0  left-middle
+        52.5  top-left corner
+        60.0  top-middle
+
+        So every edge midpoint is the moment the marker is perfectly straight.
+        Everywhere else its inner edge points toward the exact screen center.
+      */
+      function perimeterPoint(progress) {
+        progress = ((progress % 1) + 1) % 1;
+
+        var segment = progress * 8;
+        var index = Math.floor(segment) % 8;
+        var t = segment - Math.floor(segment);
+
+        var w = screenW;
+        var h = screenH;
+
+        switch (index) {
+          case 0:
+            return { x: w / 2 + (w / 2) * t, y: 0 };
+
+          case 1:
+            return { x: w, y: (h / 2) * t };
+
+          case 2:
+            return { x: w, y: h / 2 + (h / 2) * t };
+
+          case 3:
+            return { x: w - (w / 2) * t, y: h };
+
+          case 4:
+            return { x: w / 2 - (w / 2) * t, y: h };
+
+          case 5:
+            return { x: 0, y: h - (h / 2) * t };
+
+          case 6:
+            return { x: 0, y: h / 2 - (h / 2) * t };
+
+          default:
+            return { x: (w / 2) * t, y: 0 };
+        }
+      }
+
+      function polarPoint(cx, cy, radius, angle) {
+        return {
+          x: cx + Math.cos(angle) * radius,
+          y: cy + Math.sin(angle) * radius
+        };
+      }
+
       function drawSecondBlock(d) {
-        if (!physicalLength) return;
+        if (!screenW || !screenH) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var progress = seconds / 60;
-        var distance = progress * physicalLength;
 
-        var center = physicalPath.getPointAtLength(distance);
+        var boundary = perimeterPoint(progress);
 
-        /*
-          Critical rule:
-          the INNER face of the square always points at the exact
-          center of the screen.
-
-          That makes the marker:
-          - perfectly straight only at edge midpoints
-          - immediately tilt as it leaves a midpoint
-          - progressively tilt more toward each corner
-          - stay correctly oriented through the corner
-        */
         var cx = screenW / 2;
         var cy = screenH / 2;
 
-        var inwardX = cx - center.x;
-        var inwardY = cy - center.y;
-        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
+        var dx = boundary.x - cx;
+        var dy = boundary.y - cy;
 
-        inwardX /= inwardMag;
-        inwardY /= inwardMag;
+        var boundaryRadius = Math.hypot(dx, dy);
+        if (!boundaryRadius) return;
 
-        /*
-          Tangent is perpendicular to the inward normal.
-          The square's inner edge lies along this tangent.
-        */
-        var tangentX = -inwardY;
-        var tangentY = inwardX;
-
-        var half = blockSize / 2;
+        var angle = Math.atan2(dy, dx);
 
         /*
-          Put the square center exactly on the physical screen boundary.
-          Half of the square is therefore outside the viewport and clipped.
+          Half the 40px depth is inside the screen and half is outside.
+          The SVG viewport clips the outside half naturally.
         */
-        var outerCenterX = center.x - inwardX * half;
-        var outerCenterY = center.y - inwardY * half;
-        var innerCenterX = center.x + inwardX * half;
-        var innerCenterY = center.y + inwardY * half;
+        var innerRadius = boundaryRadius - blockDepth / 2;
+        var outerRadius = boundaryRadius + blockDepth / 2;
 
-        var p1 = {
-          x: outerCenterX - tangentX * half,
-          y: outerCenterY - tangentY * half
-        };
-
-        var p2 = {
-          x: outerCenterX + tangentX * half,
-          y: outerCenterY + tangentY * half
-        };
-
-        var p3 = {
-          x: innerCenterX + tangentX * half,
-          y: innerCenterY + tangentY * half
-        };
-
-        var p4 = {
-          x: innerCenterX - tangentX * half,
-          y: innerCenterY - tangentY * half
-        };
-
-        secondBlock.setAttribute(
-          'd',
-          [
-            'M', p1.x.toFixed(3), p1.y.toFixed(3),
-            'L', p2.x.toFixed(3), p2.y.toFixed(3),
-            'L', p3.x.toFixed(3), p3.y.toFixed(3),
-            'L', p4.x.toFixed(3), p4.y.toFixed(3),
-            'Z'
-          ].join(' ')
+        /*
+          Make the inner arc approximately 40px wide.
+          Because it is a circular arc centered on the exact screen center,
+          every point on that inside edge literally faces the center.
+        */
+        var halfAngle = Math.asin(
+          Math.min(0.95, (blockWidth / 2) / Math.max(innerRadius, blockWidth))
         );
+
+        var samples = 18;
+        var outer = [];
+        var inner = [];
+
+        for (var i = 0; i <= samples; i++) {
+          var u = i / samples;
+          var a = angle - halfAngle + (halfAngle * 2 * u);
+
+          outer.push(polarPoint(cx, cy, outerRadius, a));
+          inner.push(polarPoint(cx, cy, innerRadius, a));
+        }
+
+        var parts = [];
+
+        parts.push(
+          'M',
+          outer[0].x.toFixed(3),
+          outer[0].y.toFixed(3)
+        );
+
+        for (var j = 1; j < outer.length; j++) {
+          parts.push(
+            'L',
+            outer[j].x.toFixed(3),
+            outer[j].y.toFixed(3)
+          );
+        }
+
+        for (var k = inner.length - 1; k >= 0; k--) {
+          parts.push(
+            'L',
+            inner[k].x.toFixed(3),
+            inner[k].y.toFixed(3)
+          );
+        }
+
+        parts.push('Z');
+
+        secondBlock.setAttribute('d', parts.join(' '));
       }
 
       function update() {
@@ -296,9 +298,9 @@
         window.location.href = 'https://soundcloud.com/';
       });
 
-      window.addEventListener('resize', setupPaths);
+      window.addEventListener('resize', setup);
 
-      setupPaths();
+      setup();
       update();
     })();
   </script>
