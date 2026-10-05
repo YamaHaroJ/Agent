@@ -44,6 +44,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteGetNowPlayingClient: MRMediaRemoteGetNowPlayingClient?
     private var mediaRemoteGetInfoForClient: MRMediaRemoteGetNowPlayingInfoForClient?
     private var mediaRemoteGetAppDisplayID: MRMediaRemoteGetNowPlayingApplicationDisplayID?
+    private var mediaRemoteGetInfoForApp: MRMediaRemoteGetNowPlayingInfoForApp?
     private var mediaRemoteClientBundleID: MRNowPlayingClientGetBundleIdentifier?
     private var mediaRemoteGetNowPlayingInfoWithArtwork: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork?
     private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
@@ -100,6 +101,15 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         @convention(c) (
             DispatchQueue,
             @escaping @convention(block) (CFString?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingInfoForApp =
+        @convention(c) (
+            CFString,
+            UnsafeRawPointer?,
+            Bool,
+            DispatchQueue,
+            @escaping @convention(block) (NSDictionary?) -> Void
         ) -> Void
 
     private typealias MRNowPlayingClientGetBundleIdentifier =
@@ -887,6 +897,16 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let infoForAppSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingInfoForApp"
+        ) {
+            mediaRemoteGetInfoForApp = unsafeBitCast(
+                infoForAppSymbol,
+                to: MRMediaRemoteGetNowPlayingInfoForApp.self
+            )
+        }
+
         if let bundleIDSymbol = dlsym(
             handle,
             "MRNowPlayingClientGetBundleIdentifier"
@@ -988,6 +1008,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             "now-playing client: \(mediaRemoteGetNowPlayingClient != nil)\n" +
             "client info: \(mediaRemoteGetInfoForClient != nil)\n" +
             "app display ID: \(mediaRemoteGetAppDisplayID != nil)\n" +
+            "app info: \(mediaRemoteGetInfoForApp != nil)\n" +
             "local origin: \(mediaRemoteGetLocalOrigin != nil)\n" +
             "global info: \(mediaRemoteGetNowPlayingInfo != nil)\n" +
             "active origin: \(mediaRemoteGetActiveOrigin != nil)\n" +
@@ -1008,9 +1029,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // Ask MediaRemote for the active client first, then query that client
-        // directly with includeArtwork=true. This can work even when the
-        // global now-playing dictionary is intentionally empty.
+        // Ask for the active app's bundle identifier, then query that app
+        // directly for now-playing info/artwork. This avoids relying on the
+        // now-playing-client symbol, which is absent on this iPad build.
+        if tryAppSpecificNowPlaying() {
+            return
+        }
+
         if tryClientSpecificNowPlaying() {
             return
         }
@@ -1032,6 +1057,88 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryAppSpecificNowPlaying() -> Bool {
+        guard
+            let getDisplayID = mediaRemoteGetAppDisplayID,
+            let getInfoForApp = mediaRemoteGetInfoForApp
+        else {
+            return false
+        }
+
+        getDisplayID(DispatchQueue.main) { [weak self] displayID in
+            guard let self else { return }
+
+            guard let displayID, CFStringGetLength(displayID) > 0 else {
+                self.setArtworkDebug(
+                    "APP ROUTE\n" +
+                    "display ID: NIL\n" +
+                    "app-info symbol: YES"
+                )
+                return
+            }
+
+            let displayString = displayID as String
+            let origin = self.mediaRemoteGetLocalOrigin?()
+
+            getInfoForApp(
+                displayID,
+                origin,
+                true,
+                DispatchQueue.main
+            ) { [weak self] infoObject in
+                guard let self else { return }
+
+                let info = infoObject as? [String: Any] ?? [:]
+                let title =
+                    info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+                    ?? "<nil>"
+                let artist =
+                    info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+                    ?? "<nil>"
+
+                var artworkData =
+                    info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+
+                if artworkData == nil {
+                    for value in info.values {
+                        if let data = value as? Data,
+                           UIImage(data: data) != nil {
+                            artworkData = data
+                            break
+                        }
+                    }
+                }
+
+                self.setArtworkDebug(
+                    "APP ROUTE\n" +
+                    "display ID: \(displayString)\n" +
+                    "keys: \(info.count)\n" +
+                    "title: \(title)\n" +
+                    "artist: \(artist)\n" +
+                    "artwork bytes: \(artworkData?.count ?? 0)"
+                )
+
+                if let artworkData,
+                   let image = UIImage(data: artworkData) {
+                    self.setArtwork(image, data: artworkData)
+                    return
+                }
+
+                if title != "<nil>" || artist != "<nil>" {
+                    self.fetchArtworkFallback(
+                        title: title == "<nil>" ? nil : title,
+                        artist: artist == "<nil>" ? nil : artist,
+                        album:
+                            info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String
+                    )
+                }
+            }
+        }
+
+        return true
     }
 
     @discardableResult
