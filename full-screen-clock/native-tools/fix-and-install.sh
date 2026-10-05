@@ -36,6 +36,9 @@ BUNDLE_ID="com.jayden.Clock"
 LOG="$HOME/Library/Logs/ClockNativeInstall.log"
 
 REMOTE_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/native-app"
+TOOLS_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/native-tools"
+ASSET_DIR="$SOURCE_DIR/Assets.xcassets"
+ICON_SCRIPT="$HOME/Library/Caches/ClockGenerateIcons.swift"
 
 mkdir -p "$HOME/Library/Logs"
 
@@ -46,7 +49,7 @@ if [[ ! -d "$PROJECT" ]]; then
   exit 1
 fi
 
-echo "1/5 Replacing native source with the fixed GitHub-direct loader..." | tee -a "$LOG"
+echo "1/6 Replacing native source with the latest Clock build..." | tee -a "$LOG"
 CACHE_BUST="$(date +%s)"
 curl -fsSL "$REMOTE_BASE/ContentView.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ContentView.swift"
 curl -fsSL "$REMOTE_BASE/ClockApp.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ClockApp.swift"
@@ -58,15 +61,32 @@ fi
 
 echo "Confirmed latest background-photo Clock source is present." | tee -a "$LOG"
 
+if ! grep -q "ClockChromeC" "$SOURCE_DIR/ContentView.swift"; then
+  echo "ERROR: Latest alternate-icon Clock source was not downloaded." | tee -a "$LOG"
+  exit 1
+fi
+
 if grep -q "raw.githack.com" "$SOURCE_DIR/ContentView.swift"; then
   echo "ERROR: old raw.githack loader is still present." | tee -a "$LOG"
   exit 1
 fi
 
-echo "2/5 Cleaning old build output..." | tee -a "$LOG"
+echo "2/6 Generating the three built-in app icons..." | tee -a "$LOG"
+mkdir -p "$ASSET_DIR"
+curl -fsSL "$TOOLS_BASE/generate-icons.swift?v=$CACHE_BUST" -o "$ICON_SCRIPT"
+xcrun swift "$ICON_SCRIPT" "$ASSET_DIR" 2>&1 | tee -a "$LOG"
+
+for icon_set in ClockItalicC ClockWordmark ClockChromeC; do
+  if [[ ! -f "$ASSET_DIR/$icon_set.appiconset/Contents.json" ]]; then
+    echo "ERROR: Failed to generate $icon_set." | tee -a "$LOG"
+    exit 1
+  fi
+done
+
+echo "3/6 Cleaning old build output..." | tee -a "$LOG"
 rm -rf "$BUILD_DIR"
 
-echo "3/5 Building and signing Clock..." | tee -a "$LOG"
+echo "4/6 Building and signing Clock..." | tee -a "$LOG"
 xcodebuild \
   -project "$PROJECT" \
   -scheme Clock \
@@ -76,6 +96,8 @@ xcodebuild \
   -derivedDataPath "$BUILD_DIR" \
   -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
+  "ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES=ClockItalicC ClockWordmark ClockChromeC" \
+  ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS=YES \
   clean build 2>&1 | tee -a "$LOG"
 
 APP_PATH="$BUILD_DIR/Build/Products/Debug-iphoneos/Clock.app"
@@ -85,12 +107,12 @@ if [[ ! -d "$APP_PATH" ]]; then
   exit 1
 fi
 
-echo "4/5 Installing Clock on $DEVICE_NAME..." | tee -a "$LOG"
+echo "5/6 Installing Clock on $DEVICE_NAME..." | tee -a "$LOG"
 xcrun devicectl device install app --device "$DEVICE_NAME" "$APP_PATH" 2>&1 | tee -a "$LOG"
 
-echo "5/5 Launching Clock..." | tee -a "$LOG"
+echo "6/6 Launching Clock..." | tee -a "$LOG"
 xcrun devicectl device process launch --device "$DEVICE_NAME" "$BUNDLE_ID" 2>&1 | tee -a "$LOG" || true
 
 echo
-echo "✅ Fixed source, cleaned, rebuilt, installed, and launched Clock."
+echo "✅ Rebuilt Clock with background photos and 3 selectable app icons."
 echo "Log: $LOG"
