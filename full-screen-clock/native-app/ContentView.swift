@@ -24,6 +24,7 @@ struct ClockViewController: UIViewControllerRepresentable {
 }
 
 final class FullScreenClockViewController: UIViewController, WKNavigationDelegate {
+    private var artworkView: UIImageView!
     private var webView: WKWebView!
     private var errorLabel: UILabel!
 
@@ -35,25 +36,42 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
+    private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
+    private var artworkTimer: Timer?
+    private var lastArtworkData: Data?
 
-    // Private MediaRemote function:
-    // Boolean MRMediaRemoteSendCommand(MRMediaRemoteCommand command, id userInfo)
-    // Command 2 = TogglePlayPause.
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
+
+    private typealias MRMediaRemoteGetNowPlayingInfo =
+        @convention(c) (DispatchQueue, @escaping ([String: Any]?) -> Void) -> Void
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
         view.backgroundColor = .black
 
+        artworkView = UIImageView()
+        artworkView.translatesAutoresizingMaskIntoConstraints = false
+        artworkView.backgroundColor = .black
+        artworkView.contentMode = .scaleAspectFill
+        artworkView.clipsToBounds = true
+        view.addSubview(artworkView)
+
+        NSLayoutConstraint.activate([
+            artworkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            artworkView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            artworkView.topAnchor.constraint(equalTo: view.topAnchor),
+            artworkView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+
         let config = WKWebViewConfiguration()
         webView = WKWebView(frame: .zero, configuration: config)
         webView.translatesAutoresizingMaskIntoConstraints = false
         webView.navigationDelegate = self
         webView.isOpaque = false
-        webView.backgroundColor = .black
-        webView.scrollView.backgroundColor = .black
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
         webView.scrollView.isScrollEnabled = false
         webView.scrollView.bounces = false
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -86,6 +104,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         setupMediaRemote()
         setupMediaControls()
+        startArtworkUpdates()
 
         UIApplication.shared.isIdleTimerDisabled = true
         loadClock()
@@ -111,7 +130,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
             guard
                 let data,
-                let html = String(data: data, encoding: .utf8)
+                var html = String(data: data, encoding: .utf8)
             else {
                 DispatchQueue.main.async {
                     self.errorLabel.text =
@@ -121,6 +140,20 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 }
                 return
             }
+
+            let nativeTransparencyCSS = """
+            <style id="native-artwork-background">
+              html, body, #app {
+                background: transparent !important;
+                background-color: transparent !important;
+              }
+            </style>
+            """
+
+            html = html.replacingOccurrences(
+                of: "</head>",
+                with: nativeTransparencyCSS + "</head>"
+            )
 
             DispatchQueue.main.async {
                 self.errorLabel.isHidden = true
@@ -144,14 +177,88 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         mediaRemoteHandle = handle
 
-        guard let symbol = dlsym(handle, "MRMediaRemoteSendCommand") else {
+        if let commandSymbol = dlsym(handle, "MRMediaRemoteSendCommand") {
+            mediaRemoteSendCommand = unsafeBitCast(
+                commandSymbol,
+                to: MRMediaRemoteSendCommand.self
+            )
+        }
+
+        if let infoSymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
+            mediaRemoteGetNowPlayingInfo = unsafeBitCast(
+                infoSymbol,
+                to: MRMediaRemoteGetNowPlayingInfo.self
+            )
+        }
+    }
+
+    private func startArtworkUpdates() {
+        refreshArtwork()
+
+        artworkTimer = Timer.scheduledTimer(
+            withTimeInterval: 1.0,
+            repeats: true
+        ) { [weak self] _ in
+            self?.refreshArtwork()
+        }
+    }
+
+    private func refreshArtwork() {
+        guard let getNowPlayingInfo = mediaRemoteGetNowPlayingInfo else {
             return
         }
 
-        mediaRemoteSendCommand = unsafeBitCast(
-            symbol,
-            to: MRMediaRemoteSendCommand.self
-        )
+        getNowPlayingInfo(DispatchQueue.main) { [weak self] info in
+            guard let self else { return }
+
+            guard let info else {
+                self.setArtwork(nil, data: nil)
+                return
+            }
+
+            var artworkData =
+                info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+
+            if artworkData == nil {
+                for value in info.values {
+                    if let data = value as? Data,
+                       UIImage(data: data) != nil {
+                        artworkData = data
+                        break
+                    }
+                }
+            }
+
+            guard
+                let artworkData,
+                let image = UIImage(data: artworkData)
+            else {
+                return
+            }
+
+            self.setArtwork(image, data: artworkData)
+        }
+    }
+
+    private func setArtwork(_ image: UIImage?, data: Data?) {
+        DispatchQueue.main.async {
+            if let data, self.lastArtworkData == data {
+                return
+            }
+
+            self.lastArtworkData = data
+
+            UIView.transition(
+                with: self.artworkView,
+                duration: 0.22,
+                options: [.transitionCrossDissolve, .allowAnimatedContent],
+                animations: {
+                    self.artworkView.image = image
+                    self.artworkView.backgroundColor =
+                        image == nil ? .black : .clear
+                }
+            )
+        }
     }
 
     private func setupMediaControls() {
@@ -285,6 +392,8 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             return
         }
 
+        refreshArtwork()
+
         UIView.animate(
             withDuration: 0.08,
             animations: {
@@ -302,9 +411,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         guard presentedViewController == nil else { return }
 
         let alert = UIAlertController(
-            title: "Play/Pause unavailable",
+            title: "Media control unavailable",
             message:
-                "This iPad blocked direct control of another app's playback. " +
+                "This iPad blocked direct control of the current media app. " +
                 "The volume slider will still work normally.",
             preferredStyle: .alert
         )
@@ -334,6 +443,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     deinit {
+        artworkTimer?.invalidate()
         UIApplication.shared.isIdleTimerDisabled = false
 
         if let mediaRemoteHandle {
