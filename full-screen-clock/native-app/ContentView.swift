@@ -1056,9 +1056,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                     self.setArtworkDebug(
                         "CLIENT ROUTE\n" +
                         "active client: NIL\n" +
-                        "display ID: \(displayString)"
+                        "display ID: \(displayString)\n" +
+                        "NOTE: direct-artwork fallback paused for diagnosis"
                     )
-                    _ = self.tryDirectNowPlayingArtwork()
                     return
                 }
 
@@ -1128,7 +1128,17 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                         return
                     }
 
-                    _ = self.tryDirectNowPlayingArtwork()
+                    self.setArtworkDebug(
+                        "CLIENT ROUTE\n" +
+                        "client: YES\n" +
+                        "bundle: \(bundleString)\n" +
+                        "display ID: \(displayString)\n" +
+                        "keys: \(info.count)\n" +
+                        "title: \(title)\n" +
+                        "artist: \(artist)\n" +
+                        "artwork bytes: \(artworkData?.count ?? 0)\n" +
+                        "NOTE: direct-artwork fallback paused for diagnosis"
+                    )
                 }
             }
         }
