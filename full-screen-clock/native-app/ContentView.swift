@@ -39,6 +39,8 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
     private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
+    private var mediaRemoteGetLocalOrigin: MRMediaRemoteGetLocalOrigin?
+    private var mediaRemoteGetNowPlayingArtwork: MRMediaRemoteGetNowPlayingArtwork?
     private var mediaRemoteGetNowPlayingInfoWithArtwork: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork?
     private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
     private var mediaRemoteSetWantsNotifications: MRMediaRemoteSetWantsNowPlayingNotifications?
@@ -64,6 +66,16 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
+
+    private typealias MRMediaRemoteGetLocalOrigin =
+        @convention(c) () -> UnsafeRawPointer?
+
+    private typealias MRMediaRemoteGetNowPlayingArtwork =
+        @convention(c) (
+            UnsafeRawPointer?,
+            DispatchQueue,
+            @escaping @convention(block) (UnsafeRawPointer?) -> Void
+        ) -> Void
 
     private typealias MRMediaRemoteGetNowPlayingInfo =
         @convention(c) (
@@ -797,6 +809,26 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let originSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetLocalOrigin"
+        ) {
+            mediaRemoteGetLocalOrigin = unsafeBitCast(
+                originSymbol,
+                to: MRMediaRemoteGetLocalOrigin.self
+            )
+        }
+
+        if let directArtworkSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingArtwork"
+        ) {
+            mediaRemoteGetNowPlayingArtwork = unsafeBitCast(
+                directArtworkSymbol,
+                to: MRMediaRemoteGetNowPlayingArtwork.self
+            )
+        }
+
         if let infoSymbol = dlsym(handle, "MRMediaRemoteGetNowPlayingInfo") {
             mediaRemoteGetNowPlayingInfo = unsafeBitCast(
                 infoSymbol,
@@ -884,6 +916,8 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         setArtworkDebug(
             "MediaRemote loaded\n" +
+            "direct artwork: \(mediaRemoteGetNowPlayingArtwork != nil)\n" +
+            "local origin: \(mediaRemoteGetLocalOrigin != nil)\n" +
             "global info: \(mediaRemoteGetNowPlayingInfo != nil)\n" +
             "active origin: \(mediaRemoteGetActiveOrigin != nil)\n" +
             "player paths: \(mediaRemoteGetActivePlayerPathsForOrigin != nil)\n" +
@@ -903,8 +937,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // First instantiate Apple's actual MediaControls module and read the
-        // artwork image that its Now Playing view renders.
+        // iPadOS 26 still exposes a dedicated artwork request even when the
+        // generic now-playing metadata dictionary is empty. Try that exact
+        // artwork channel first.
+        if tryDirectNowPlayingArtwork() {
+            return
+        }
+
         if refreshArtworkFromEmbeddedSystemModule() {
             return
         }
@@ -918,6 +957,78 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryDirectNowPlayingArtwork() -> Bool {
+        guard
+            let getLocalOrigin = mediaRemoteGetLocalOrigin,
+            let getArtwork = mediaRemoteGetNowPlayingArtwork
+        else {
+            return false
+        }
+
+        guard let origin = getLocalOrigin() else {
+            setArtworkDebug("DIRECT ARTWORK: local origin is nil")
+            return false
+        }
+
+        setArtworkDebug(
+            "DIRECT ARTWORK\n" +
+            "Requesting the system Now Playing artwork channel..."
+        )
+
+        getArtwork(
+            origin,
+            DispatchQueue.main
+        ) { [weak self] artworkObject in
+            guard let self else { return }
+
+            guard let artworkObject else {
+                self.setArtworkDebug(
+                    "DIRECT ARTWORK callback fired\n" +
+                    "artwork object: NIL"
+                )
+                return
+            }
+
+            guard let copyArtworkData = self.mediaRemoteCopyArtworkData else {
+                self.setArtworkDebug(
+                    "DIRECT ARTWORK callback fired\n" +
+                    "artwork object: YES\n" +
+                    "image-data copier: unavailable"
+                )
+                return
+            }
+
+            guard let copied = copyArtworkData(artworkObject) else {
+                self.setArtworkDebug(
+                    "DIRECT ARTWORK callback fired\n" +
+                    "artwork object: YES\n" +
+                    "image data: NIL"
+                )
+                return
+            }
+
+            let data = copied.takeRetainedValue() as Data
+
+            guard let image = UIImage(data: data) else {
+                self.setArtworkDebug(
+                    "DIRECT ARTWORK callback fired\n" +
+                    "artwork bytes: \(data.count)\n" +
+                    "UIImage decode: FAILED"
+                )
+                return
+            }
+
+            self.setArtworkDebug(
+                "DIRECT ARTWORK SUCCESS\n" +
+                "artwork bytes: \(data.count)"
+            )
+            self.setArtwork(image, data: data)
+        }
+
+        return true
     }
 
     @discardableResult
