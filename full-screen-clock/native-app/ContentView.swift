@@ -430,151 +430,22 @@ final class FullScreenClockViewController:
         named iconName: String,
         size: CGFloat
     ) -> UIImage {
+        if let exactPreview = UIImage(
+            named: iconName + "Preview"
+        ) {
+            return exactPreview
+        }
+
         let renderer = UIGraphicsImageRenderer(
             size: CGSize(width: size, height: size)
         )
 
         return renderer.image { context in
-            let rect = CGRect(x: 0, y: 0, width: size, height: size)
-            let path = UIBezierPath(
-                roundedRect: rect,
-                cornerRadius: size * 0.225
-            )
-            path.addClip()
-
             UIColor.black.setFill()
-            context.fill(rect)
-
-            if iconName == "ClockChromeC" {
-                let colors = [
-                    UIColor(white: 0.98, alpha: 1).cgColor,
-                    UIColor(white: 0.55, alpha: 1).cgColor,
-                    UIColor(white: 0.92, alpha: 1).cgColor
-                ] as CFArray
-
-                let locations: [CGFloat] = [0, 0.58, 1]
-                let gradient = CGGradient(
-                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                    colors: colors,
-                    locations: locations
-                )!
-
-                let font = italicFont(
-                    size: size * 0.67,
-                    weight: .black
-                )
-                drawCenteredPreviewText(
-                    "C",
-                    rect: rect.offsetBy(dx: size * 0.018, dy: 0),
-                    font: font,
-                    fill: nil,
-                    gradient: gradient,
-                    context: context.cgContext
-                )
-                return
-            }
-
-            if iconName == "ClockWordmark" {
-                drawCenteredPreviewText(
-                    "Clock",
-                    rect: rect,
-                    font: italicFont(
-                        size: size * 0.31,
-                        weight: .bold
-                    ),
-                    fill: .white,
-                    gradient: nil,
-                    context: context.cgContext
-                )
-                return
-            }
-
-            drawCenteredPreviewText(
-                "C",
-                rect: rect.offsetBy(dx: size * 0.018, dy: 0),
-                font: italicFont(
-                    size: size * 0.67,
-                    weight: .black
-                ),
-                fill: .white,
-                gradient: nil,
-                context: context.cgContext
+            context.fill(
+                CGRect(x: 0, y: 0, width: size, height: size)
             )
         }
-    }
-
-    private func italicFont(
-        size: CGFloat,
-        weight: UIFont.Weight
-    ) -> UIFont {
-        let base = UIFont.systemFont(ofSize: size, weight: weight)
-        guard
-            let descriptor =
-                base.fontDescriptor.withSymbolicTraits(.traitItalic)
-        else {
-            return base
-        }
-        return UIFont(descriptor: descriptor, size: size)
-    }
-
-    private func drawCenteredPreviewText(
-        _ text: String,
-        rect: CGRect,
-        font: UIFont,
-        fill: UIColor?,
-        gradient: CGGradient?,
-        context: CGContext
-    ) {
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: fill ?? UIColor.white,
-            .paragraphStyle: paragraph
-        ]
-
-        let attributed = NSAttributedString(
-            string: text,
-            attributes: attributes
-        )
-        let bounds = attributed.boundingRect(
-            with: CGSize(
-                width: rect.width * 0.95,
-                height: rect.height
-            ),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
-
-        let textRect = CGRect(
-            x: rect.midX - bounds.width / 2,
-            y: rect.midY - bounds.height / 2,
-            width: bounds.width,
-            height: bounds.height
-        )
-
-        guard let gradient else {
-            attributed.draw(in: textRect)
-            return
-        }
-
-        context.saveGState()
-        UIGraphicsPushContext(context)
-
-        UIColor.white.setFill()
-        attributed.draw(in: textRect)
-        context.setBlendMode(.sourceIn)
-
-        context.drawLinearGradient(
-            gradient,
-            start: CGPoint(x: rect.midX, y: textRect.minY),
-            end: CGPoint(x: rect.midX, y: textRect.maxY),
-            options: []
-        )
-
-        UIGraphicsPopContext()
-        context.restoreGState()
     }
 
     private func setAppIcon(_ iconName: String?) {
