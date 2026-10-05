@@ -430,22 +430,184 @@ final class FullScreenClockViewController:
         named iconName: String,
         size: CGFloat
     ) -> UIImage {
-        if let exactPreview = UIImage(
-            named: iconName + "Preview"
-        ) {
-            return exactPreview
-        }
-
         let renderer = UIGraphicsImageRenderer(
             size: CGSize(width: size, height: size)
         )
 
         return renderer.image { context in
-            UIColor.black.setFill()
-            context.fill(
-                CGRect(x: 0, y: 0, width: size, height: size)
+            let cg = context.cgContext
+            let rect = CGRect(x: 0, y: 0, width: size, height: size)
+
+            let clip = UIBezierPath(
+                roundedRect: rect,
+                cornerRadius: size * 0.225
+            )
+            clip.addClip()
+
+            if iconName == "ClockChromeC" {
+                let background = CGGradient(
+                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                    colors: [
+                        UIColor(
+                            red: 0.16,
+                            green: 0.18,
+                            blue: 0.20,
+                            alpha: 1
+                        ).cgColor,
+                        UIColor.black.cgColor
+                    ] as CFArray,
+                    locations: [0, 1]
+                )!
+
+                cg.drawLinearGradient(
+                    background,
+                    start: CGPoint(x: 0, y: 0),
+                    end: CGPoint(x: size, y: size),
+                    options: []
+                )
+            } else {
+                UIColor.black.setFill()
+                cg.fill(rect)
+            }
+
+            if iconName == "ClockWordmark" {
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.alignment = .center
+
+                let base = UIFont.systemFont(
+                    ofSize: size * 0.31,
+                    weight: .black
+                )
+                let font: UIFont
+                if let descriptor =
+                    base.fontDescriptor.withSymbolicTraits(.traitItalic)
+                {
+                    font = UIFont(
+                        descriptor: descriptor,
+                        size: size * 0.31
+                    )
+                } else {
+                    font = base
+                }
+
+                let attributed = NSAttributedString(
+                    string: "Clock",
+                    attributes: [
+                        .font: font,
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: paragraph,
+                        .kern: -size * 0.015
+                    ]
+                )
+
+                let bounds = attributed.boundingRect(
+                    with: CGSize(
+                        width: size * 0.90,
+                        height: size
+                    ),
+                    options: [.usesLineFragmentOrigin, .usesFontLeading],
+                    context: nil
+                )
+
+                attributed.draw(
+                    in: CGRect(
+                        x: (size - bounds.width) / 2,
+                        y: (size - bounds.height) / 2,
+                        width: bounds.width,
+                        height: bounds.height
+                    )
+                )
+            } else {
+                let logo = racingCPreviewPath(
+                    in: rect.insetBy(
+                        dx: size * 0.10,
+                        dy: size * 0.11
+                    )
+                )
+
+                if iconName == "ClockChromeC" {
+                    cg.saveGState()
+                    logo.addClip()
+
+                    let metal = CGGradient(
+                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                        colors: [
+                            UIColor.white.cgColor,
+                            UIColor(white: 0.88, alpha: 1).cgColor,
+                            UIColor(white: 0.48, alpha: 1).cgColor,
+                            UIColor(white: 0.96, alpha: 1).cgColor
+                        ] as CFArray,
+                        locations: [0, 0.33, 0.70, 1]
+                    )!
+
+                    cg.drawLinearGradient(
+                        metal,
+                        start: CGPoint(x: size / 2, y: size * 0.16),
+                        end: CGPoint(x: size / 2, y: size * 0.84),
+                        options: []
+                    )
+                    cg.restoreGState()
+                } else {
+                    UIColor.white.setFill()
+                    logo.fill()
+                }
+            }
+
+            let border = UIBezierPath(
+                roundedRect: rect.insetBy(
+                    dx: size * 0.035,
+                    dy: size * 0.035
+                ),
+                cornerRadius: size * 0.205
+            )
+            border.lineWidth = max(1, size * 0.006)
+            UIColor.white.withAlphaComponent(0.28).setStroke()
+            border.stroke()
+        }
+    }
+
+    private func racingCPreviewPath(
+        in rect: CGRect
+    ) -> UIBezierPath {
+        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(
+                x: rect.minX + rect.width * x,
+                y: rect.minY + rect.height * y
             )
         }
+
+        let path = UIBezierPath()
+        path.move(to: p(0.78, 0.20))
+        path.addLine(to: p(0.71, 0.38))
+        path.addLine(to: p(0.53, 0.38))
+        path.addCurve(
+            to: p(0.43, 0.46),
+            controlPoint1: p(0.49, 0.38),
+            controlPoint2: p(0.46, 0.42)
+        )
+        path.addLine(to: p(0.33, 0.59))
+        path.addCurve(
+            to: p(0.36, 0.66),
+            controlPoint1: p(0.30, 0.63),
+            controlPoint2: p(0.31, 0.66)
+        )
+        path.addLine(to: p(0.64, 0.66))
+        path.addLine(to: p(0.59, 0.80))
+        path.addLine(to: p(0.33, 0.80))
+        path.addCurve(
+            to: p(0.18, 0.58),
+            controlPoint1: p(0.22, 0.80),
+            controlPoint2: p(0.15, 0.70)
+        )
+        path.addLine(to: p(0.35, 0.31))
+        path.addCurve(
+            to: p(0.57, 0.20),
+            controlPoint1: p(0.40, 0.23),
+            controlPoint2: p(0.49, 0.20)
+        )
+        path.close()
+
+        return path
     }
 
     private func setAppIcon(_ iconName: String?) {
