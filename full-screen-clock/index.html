@@ -129,8 +129,8 @@
       var screenW = 0;
       var screenH = 0;
 
-      var blockDepth = 40;
-      var blockWidth = 40;
+      var depth = 40;
+      var width = 40;
 
       function setClock(d) {
         var h = d.getHours();
@@ -144,69 +144,93 @@
       function setup() {
         screenW = window.innerWidth;
         screenH = window.innerHeight;
-
         svg.setAttribute('viewBox', '0 0 ' + screenW + ' ' + screenH);
         drawSecondBlock(new Date());
       }
 
       /*
-        One minute is split into 8 equal movements:
+        00 top-middle
+        07.5 top-right
+        15 right-middle
+        22.5 bottom-right
+        30 bottom-middle
+        37.5 bottom-left
+        45 left-middle
+        52.5 top-left
+        60 top-middle
 
-        00.0  top-middle
-        07.5  top-right corner
-        15.0  right-middle
-        22.5  bottom-right corner
-        30.0  bottom-middle
-        37.5  bottom-left corner
-        45.0  left-middle
-        52.5  top-left corner
-        60.0  top-middle
-
-        So every edge midpoint is the moment the marker is perfectly straight.
-        Everywhere else its inner edge points toward the exact screen center.
+        This keeps the long, gradual tilt you liked.
       */
       function perimeterPoint(progress) {
         progress = ((progress % 1) + 1) % 1;
 
-        var segment = progress * 8;
-        var index = Math.floor(segment) % 8;
-        var t = segment - Math.floor(segment);
-
+        var s = progress * 8;
+        var i = Math.floor(s) % 8;
+        var t = s - Math.floor(s);
         var w = screenW;
         var h = screenH;
 
-        switch (index) {
-          case 0:
-            return { x: w / 2 + (w / 2) * t, y: 0 };
-
-          case 1:
-            return { x: w, y: (h / 2) * t };
-
-          case 2:
-            return { x: w, y: h / 2 + (h / 2) * t };
-
-          case 3:
-            return { x: w - (w / 2) * t, y: h };
-
-          case 4:
-            return { x: w / 2 - (w / 2) * t, y: h };
-
-          case 5:
-            return { x: 0, y: h - (h / 2) * t };
-
-          case 6:
-            return { x: 0, y: h / 2 - (h / 2) * t };
-
-          default:
-            return { x: (w / 2) * t, y: 0 };
+        switch (i) {
+          case 0: return { x: w/2 + (w/2)*t, y: 0 };
+          case 1: return { x: w, y: (h/2)*t };
+          case 2: return { x: w, y: h/2 + (h/2)*t };
+          case 3: return { x: w - (w/2)*t, y: h };
+          case 4: return { x: w/2 - (w/2)*t, y: h };
+          case 5: return { x: 0, y: h - (h/2)*t };
+          case 6: return { x: 0, y: h/2 - (h/2)*t };
+          default:return { x: (w/2)*t, y: 0 };
         }
       }
 
-      function polarPoint(cx, cy, radius, angle) {
+      function hitScreenFromInside(p, dx, dy) {
+        var bestT = Infinity;
+        var edge = '';
+        var t;
+
+        if (dx > 0.000001) {
+          t = (screenW - p.x) / dx;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'right'; }
+        } else if (dx < -0.000001) {
+          t = (0 - p.x) / dx;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'left'; }
+        }
+
+        if (dy > 0.000001) {
+          t = (screenH - p.y) / dy;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'bottom'; }
+        } else if (dy < -0.000001) {
+          t = (0 - p.y) / dy;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'top'; }
+        }
+
         return {
-          x: cx + Math.cos(angle) * radius,
-          y: cy + Math.sin(angle) * radius
+          x: p.x + dx * bestT,
+          y: p.y + dy * bestT,
+          edge: edge
         };
+      }
+
+      function cornerBetween(a, b) {
+        var pair = a + '-' + b;
+        var reverse = b + '-' + a;
+
+        if (pair === 'top-right' || reverse === 'top-right') {
+          return { x: screenW, y: 0 };
+        }
+
+        if (pair === 'right-bottom' || reverse === 'right-bottom') {
+          return { x: screenW, y: screenH };
+        }
+
+        if (pair === 'bottom-left' || reverse === 'bottom-left') {
+          return { x: 0, y: screenH };
+        }
+
+        if (pair === 'left-top' || reverse === 'left-top') {
+          return { x: 0, y: 0 };
+        }
+
+        return null;
       }
 
       function drawSecondBlock(d) {
@@ -215,72 +239,89 @@
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
         var progress = seconds / 60;
 
-        var boundary = perimeterPoint(progress);
+        var edgeCenter = perimeterPoint(progress);
 
         var cx = screenW / 2;
         var cy = screenH / 2;
 
-        var dx = boundary.x - cx;
-        var dy = boundary.y - cy;
+        /*
+          Inward direction ALWAYS points to the exact center.
+        */
+        var ux = cx - edgeCenter.x;
+        var uy = cy - edgeCenter.y;
+        var mag = Math.hypot(ux, uy) || 1;
 
-        var boundaryRadius = Math.hypot(dx, dy);
-        if (!boundaryRadius) return;
-
-        var angle = Math.atan2(dy, dx);
+        ux /= mag;
+        uy /= mag;
 
         /*
-          Half the 40px depth is inside the screen and half is outside.
-          The SVG viewport clips the outside half naturally.
+          The inside edge is perpendicular to that center-facing direction.
+          So the WHOLE flat inner face points toward screen center.
         */
-        var innerRadius = boundaryRadius - blockDepth / 2;
-        var outerRadius = boundaryRadius + blockDepth / 2;
+        var tx = -uy;
+        var ty = ux;
+
+        var halfW = width / 2;
 
         /*
-          Make the inner arc approximately 40px wide.
-          Because it is a circular arc centered on the exact screen center,
-          every point on that inside edge literally faces the center.
+          Inner face is 40px inward from the edge.
         */
-        var halfAngle = Math.asin(
-          Math.min(0.95, (blockWidth / 2) / Math.max(innerRadius, blockWidth))
-        );
+        var innerCenter = {
+          x: edgeCenter.x + ux * depth,
+          y: edgeCenter.y + uy * depth
+        };
 
-        var samples = 18;
-        var outer = [];
-        var inner = [];
+        var innerA = {
+          x: innerCenter.x - tx * halfW,
+          y: innerCenter.y - ty * halfW
+        };
 
-        for (var i = 0; i <= samples; i++) {
-          var u = i / samples;
-          var a = angle - halfAngle + (halfAngle * 2 * u);
+        var innerB = {
+          x: innerCenter.x + tx * halfW,
+          y: innerCenter.y + ty * halfW
+        };
 
-          outer.push(polarPoint(cx, cy, outerRadius, a));
-          inner.push(polarPoint(cx, cy, innerRadius, a));
+        /*
+          Extend each end of the inner face straight outward until it
+          physically hits the screen boundary. No clipping = no diamonds.
+        */
+        var outerA = hitScreenFromInside(innerA, -ux, -uy);
+        var outerB = hitScreenFromInside(innerB, -ux, -uy);
+
+        var parts = [
+          'M', innerA.x.toFixed(3), innerA.y.toFixed(3),
+          'L', outerA.x.toFixed(3), outerA.y.toFixed(3)
+        ];
+
+        /*
+          When the two outer corners land on adjacent screen edges,
+          wrap the marker around the actual corner rather than cutting
+          diagonally across it.
+        */
+        var corner = cornerBetween(outerA.edge, outerB.edge);
+
+        if (corner) {
+          /*
+            Quadratic corner wrap: smooth bend toward/away from the
+            screen corner instead of a hard diamond point.
+          */
+          parts.push(
+            'Q',
+            corner.x.toFixed(3), corner.y.toFixed(3),
+            outerB.x.toFixed(3), outerB.y.toFixed(3)
+          );
+        } else {
+          parts.push(
+            'L',
+            outerB.x.toFixed(3), outerB.y.toFixed(3)
+          );
         }
-
-        var parts = [];
 
         parts.push(
-          'M',
-          outer[0].x.toFixed(3),
-          outer[0].y.toFixed(3)
+          'L', innerB.x.toFixed(3), innerB.y.toFixed(3),
+          'L', innerA.x.toFixed(3), innerA.y.toFixed(3),
+          'Z'
         );
-
-        for (var j = 1; j < outer.length; j++) {
-          parts.push(
-            'L',
-            outer[j].x.toFixed(3),
-            outer[j].y.toFixed(3)
-          );
-        }
-
-        for (var k = inner.length - 1; k >= 0; k--) {
-          parts.push(
-            'L',
-            inner[k].x.toFixed(3),
-            inner[k].y.toFixed(3)
-          );
-        }
-
-        parts.push('Z');
 
         secondBlock.setAttribute('d', parts.join(' '));
       }
