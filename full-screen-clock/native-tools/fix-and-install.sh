@@ -51,12 +51,12 @@ CACHE_BUST="$(date +%s)"
 curl -fsSL "$REMOTE_BASE/ContentView.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ContentView.swift"
 curl -fsSL "$REMOTE_BASE/ClockApp.swift?v=$CACHE_BUST" -o "$SOURCE_DIR/ClockApp.swift"
 
-if ! grep -q "CLOCK_ART_BRIDGE_URL" "$SOURCE_DIR/ContentView.swift"; then
-  echo "ERROR: Latest Mac-bridge Clock source was not downloaded; refusing to build stale code." | tee -a "$LOG"
+if ! grep -q "BACKGROUND_PHOTO_SETTINGS" "$SOURCE_DIR/ContentView.swift"; then
+  echo "ERROR: Latest background-photo Clock source was not downloaded; refusing to build stale code." | tee -a "$LOG"
   exit 1
 fi
 
-echo "Confirmed latest Mac-bridge Clock source is present." | tee -a "$LOG"
+echo "Confirmed latest background-photo Clock source is present." | tee -a "$LOG"
 
 if grep -q "raw.githack.com" "$SOURCE_DIR/ContentView.swift"; then
   echo "ERROR: old raw.githack loader is still present." | tee -a "$LOG"
@@ -76,8 +76,6 @@ xcodebuild \
   -derivedDataPath "$BUILD_DIR" \
   -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
-  INFOPLIST_KEY_NSLocalNetworkUsageDescription="Clock connects to your Mac on the local network to display current Now Playing artwork." \
-  INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking=YES \
   clean build 2>&1 | tee -a "$LOG"
 
 APP_PATH="$BUILD_DIR/Build/Products/Debug-iphoneos/Clock.app"
