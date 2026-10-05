@@ -50,6 +50,14 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var lastArtworkLookupKey: String?
     private var artworkLookupInFlight = false
 
+    private var mediaControlsHandle: UnsafeMutableRawPointer?
+    private var mediaControlsEndpoint: NSObject?
+    private var mediaControlsNowPlayingController: NSObject?
+    private var mediaControlsMetadataController: NSObject?
+    private var mediaControlsArtworkCatalog: NSObject?
+    private var mediaControlsArtworkRequestKey: String?
+    private var mediaControlsArtworkRequestInFlight = false
+
     private typealias MRMediaRemoteSendCommand =
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
 
@@ -178,6 +186,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         ])
 
         setupMediaRemote()
+        setupSystemMediaControlsBridge()
         setupMediaControls()
         startArtworkUpdates()
 
@@ -251,6 +260,307 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             self.artworkDebugLabel.isHidden = false
             self.artworkDebugLabel.text = "ART DEBUG\n" + text
         }
+    }
+
+    @objc(nowPlayingControllerShouldAutomaticallyUpdateResponse:)
+    private func nowPlayingControllerShouldAutomaticallyUpdateResponse(
+        _ controller: AnyObject
+    ) -> Bool {
+        true
+    }
+
+    @objc(nowPlayingController:metadataController:didChangeArtwork:)
+    private func mediaControlsArtworkChanged(
+        _ controller: AnyObject,
+        metadataController: AnyObject,
+        artwork: AnyObject
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.refreshArtworkFromSystemMediaControls()
+        }
+    }
+
+    @objc(nowPlayingController:metadataController:didChangeNowPlayingInfo:)
+    private func mediaControlsInfoChanged(
+        _ controller: AnyObject,
+        metadataController: AnyObject,
+        info: AnyObject
+    ) {
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.refreshArtworkFromSystemMediaControls()
+        }
+    }
+
+    private func systemClassObject(
+        _ className: String,
+        selectorName: String
+    ) -> NSObject? {
+        guard let cls = NSClassFromString(className) else {
+            return nil
+        }
+
+        let classObject: AnyObject = cls as AnyObject
+        let selector = NSSelectorFromString(selectorName)
+
+        guard classObject.responds(to: selector) else {
+            return nil
+        }
+
+        return classObject
+            .perform(selector)?
+            .takeUnretainedValue() as? NSObject
+    }
+
+    private func systemAllocInit(
+        _ className: String,
+        selectorName: String,
+        argument: NSObject
+    ) -> NSObject? {
+        guard let cls = NSClassFromString(className) else {
+            return nil
+        }
+
+        let classObject: AnyObject = cls as AnyObject
+        let allocSelector = NSSelectorFromString("alloc")
+        let initSelector = NSSelectorFromString(selectorName)
+
+        guard
+            let allocated = classObject
+                .perform(allocSelector)?
+                .takeUnretainedValue() as? NSObject,
+            allocated.responds(to: initSelector)
+        else {
+            return nil
+        }
+
+        return allocated
+            .perform(initSelector, with: argument)?
+            .takeUnretainedValue() as? NSObject
+    }
+
+    private func setupSystemMediaControlsBridge() {
+        let frameworkPath =
+            "/System/Library/PrivateFrameworks/MediaControls.framework/MediaControls"
+
+        guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+            setArtworkDebug("MEDIA CONTROLS: framework failed to load")
+            return
+        }
+
+        mediaControlsHandle = handle
+
+        guard let endpoint = systemClassObject(
+            "MRUEndpointController",
+            selectorName: "proactiveEndpointController"
+        ) else {
+            setArtworkDebug("MEDIA CONTROLS: proactive endpoint unavailable")
+            return
+        }
+
+        guard let controller = systemAllocInit(
+            "MRUNowPlayingController",
+            selectorName: "initWithEndpointController:",
+            argument: endpoint
+        ) else {
+            setArtworkDebug("MEDIA CONTROLS: now-playing controller failed")
+            return
+        }
+
+        mediaControlsEndpoint = endpoint
+        mediaControlsNowPlayingController = controller
+
+        let addObserverSelector = NSSelectorFromString("addObserver:")
+        if controller.responds(to: addObserverSelector) {
+            _ = controller.perform(addObserverSelector, with: self)
+        }
+
+        let updateSelector =
+            NSSelectorFromString("updateAutomaticResponseLoading")
+        if controller.responds(to: updateSelector) {
+            _ = controller.perform(updateSelector)
+        }
+
+        let metadataSelector = NSSelectorFromString("metadataController")
+        if controller.responds(to: metadataSelector) {
+            mediaControlsMetadataController = controller
+                .perform(metadataSelector)?
+                .takeUnretainedValue() as? NSObject
+        }
+
+        // Mirror what Apple's own MRUNowPlayingController does when its
+        // controls are visible: allow its endpoint response to stay live.
+        if let innerEndpoint =
+            endpoint.value(forKey: "endpointController") as? NSObject {
+            innerEndpoint.setValue(true, forKey: "allowsAutomaticResponseLoading")
+            innerEndpoint.setValue(true, forKey: "onScreen")
+            innerEndpoint.setValue(true, forKey: "deviceUnlocked")
+
+            if let proxy =
+                innerEndpoint.value(forKey: "proxyDelegate") as? NSObject {
+                let beginSelector = NSSelectorFromString("beginObserving")
+                if proxy.responds(to: beginSelector) {
+                    _ = proxy.perform(beginSelector)
+                }
+            }
+        }
+
+        if mediaControlsMetadataController != nil {
+            setArtworkDebug(
+                "MEDIA CONTROLS bridge active\n" +
+                "Waiting for Control Center metadata..."
+            )
+        } else {
+            setArtworkDebug(
+                "MEDIA CONTROLS loaded, but metadata controller is unavailable"
+            )
+        }
+    }
+
+    @discardableResult
+    private func refreshArtworkFromSystemMediaControls() -> Bool {
+        guard let metadata = mediaControlsMetadataController else {
+            return false
+        }
+
+        let info =
+            metadata.value(forKey: "nowPlayingInfo") as? NSObject
+        let title =
+            info?.value(forKey: "title") as? String ?? "<nil>"
+        let artist =
+            info?.value(forKey: "artist") as? String ?? "<nil>"
+        let album =
+            info?.value(forKey: "album") as? String ?? "<nil>"
+        let bundleID =
+            metadata.value(forKey: "bundleID") as? String ?? "<nil>"
+        let artwork =
+            metadata.value(forKey: "artwork") as? NSObject
+
+        setArtworkDebug(
+            "MEDIA CONTROLS\n" +
+            "bundle: \(bundleID)\n" +
+            "title: \(title)\n" +
+            "artist: \(artist)\n" +
+            "album: \(album)\n" +
+            "artwork object: \(artwork == nil ? "NO" : "YES")"
+        )
+
+        guard let artwork else {
+            return true
+        }
+
+        guard let catalog =
+            artwork.value(forKey: "catalog") as? NSObject
+        else {
+            setArtworkDebug(
+                "MEDIA CONTROLS\n" +
+                "title: \(title)\n" +
+                "artwork object: YES\n" +
+                "artwork catalog: NO"
+            )
+            return true
+        }
+
+        mediaControlsArtworkCatalog = catalog
+
+        let diskSelector = NSSelectorFromString("bestImageFromDisk")
+        if catalog.responds(to: diskSelector),
+           let image = catalog
+                .perform(diskSelector)?
+                .takeUnretainedValue() as? UIImage {
+            if let imageData = image.jpegData(compressionQuality: 0.98) {
+                setArtwork(image, data: imageData)
+            } else {
+                setArtwork(image, data: nil)
+            }
+            return true
+        }
+
+        let requestKey =
+            "\(bundleID)|\(title)|\(artist)|\(album)|\(ObjectIdentifier(catalog))"
+
+        guard
+            !mediaControlsArtworkRequestInFlight ||
+            mediaControlsArtworkRequestKey != requestKey
+        else {
+            return true
+        }
+
+        mediaControlsArtworkRequestKey = requestKey
+        mediaControlsArtworkRequestInFlight = true
+
+        let sizeSelector = NSSelectorFromString("setFittingSize:")
+        if catalog.responds(to: sizeSelector) {
+            typealias SetFittingSizeFunction =
+                @convention(c) (
+                    AnyObject,
+                    Selector,
+                    CGSize
+                ) -> Void
+
+            let function = unsafeBitCast(
+                catalog.method(for: sizeSelector),
+                to: SetFittingSizeFunction.self
+            )
+
+            function(
+                catalog,
+                sizeSelector,
+                CGSize(width: 1600, height: 1600)
+            )
+        }
+
+        let requestSelector =
+            NSSelectorFromString("requestImageWithCompletionHandler:")
+
+        guard catalog.responds(to: requestSelector) else {
+            mediaControlsArtworkRequestInFlight = false
+            setArtworkDebug(
+                "MEDIA CONTROLS has an artwork catalog, " +
+                "but it cannot request an image"
+            )
+            return true
+        }
+
+        typealias ArtworkCompletion =
+            @convention(block) (UIImage?, NSError?) -> Void
+        typealias RequestImageFunction =
+            @convention(c) (
+                AnyObject,
+                Selector,
+                ArtworkCompletion
+            ) -> Void
+
+        let requestImage = unsafeBitCast(
+            catalog.method(for: requestSelector),
+            to: RequestImageFunction.self
+        )
+
+        let completion: ArtworkCompletion = { [weak self] image, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+
+                self.mediaControlsArtworkRequestInFlight = false
+
+                if let image {
+                    if let imageData =
+                        image.jpegData(compressionQuality: 0.98) {
+                        self.setArtwork(image, data: imageData)
+                    } else {
+                        self.setArtwork(image, data: nil)
+                    }
+                    return
+                }
+
+                self.setArtworkDebug(
+                    "MEDIA CONTROLS artwork request failed\n" +
+                    "title: \(title)\n" +
+                    "error: \(error?.localizedDescription ?? "<nil>")"
+                )
+            }
+        }
+
+        requestImage(catalog, requestSelector, completion)
+        return true
     }
 
     private func setupMediaRemote() {
@@ -377,9 +687,12 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // First try the active-origin/player-path route used by modern
-        // MediaRemote. The legacy global info API can return an empty
-        // dictionary even while Control Center has full metadata.
+        // This is the same higher-level MediaControls/MPC stack used by
+        // Apple's Now Playing surfaces. Try it before raw MediaRemote.
+        if refreshArtworkFromSystemMediaControls() {
+            return
+        }
+
         if tryArtworkFromActivePlayerPath() {
             return
         }
@@ -918,6 +1231,10 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         if let mediaRemoteHandle {
             dlclose(mediaRemoteHandle)
+        }
+
+        if let mediaControlsHandle {
+            dlclose(mediaControlsHandle)
         }
     }
 
