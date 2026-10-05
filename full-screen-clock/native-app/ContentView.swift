@@ -1,6 +1,8 @@
 import SwiftUI
 import WebKit
 import UIKit
+import MediaPlayer
+import Darwin
 
 struct ContentView: View {
     var body: some View {
@@ -24,6 +26,19 @@ struct ClockViewController: UIViewControllerRepresentable {
 final class FullScreenClockViewController: UIViewController, WKNavigationDelegate {
     private var webView: WKWebView!
     private var errorLabel: UILabel!
+
+    private var mediaControls: UIVisualEffectView!
+    private var playPauseButton: UIButton!
+    private var volumeView: MPVolumeView!
+
+    private var mediaRemoteHandle: UnsafeMutableRawPointer?
+    private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
+
+    // Private MediaRemote function:
+    // Boolean MRMediaRemoteSendCommand(MRMediaRemoteCommand command, id userInfo)
+    // Command 2 = TogglePlayPause.
+    private typealias MRMediaRemoteSendCommand =
+        @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -67,6 +82,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             errorLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -30)
         ])
 
+        setupMediaRemote()
+        setupMediaControls()
+
         UIApplication.shared.isIdleTimerDisabled = true
         loadClock()
     }
@@ -104,6 +122,136 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }.resume()
     }
 
+    private func setupMediaRemote() {
+        let frameworkPath =
+            "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
+
+        guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+            return
+        }
+
+        mediaRemoteHandle = handle
+
+        guard let symbol = dlsym(handle, "MRMediaRemoteSendCommand") else {
+            return
+        }
+
+        mediaRemoteSendCommand = unsafeBitCast(
+            symbol,
+            to: MRMediaRemoteSendCommand.self
+        )
+    }
+
+    private func setupMediaControls() {
+        mediaControls = UIVisualEffectView(
+            effect: UIBlurEffect(style: .systemThinMaterialDark)
+        )
+        mediaControls.translatesAutoresizingMaskIntoConstraints = false
+        mediaControls.layer.cornerRadius = 26
+        mediaControls.clipsToBounds = true
+
+        playPauseButton = UIButton(type: .system)
+        playPauseButton.translatesAutoresizingMaskIntoConstraints = false
+        playPauseButton.tintColor = .white
+        playPauseButton.setImage(
+            UIImage(systemName: "playpause.fill"),
+            for: .normal
+        )
+        playPauseButton.addTarget(
+            self,
+            action: #selector(toggleExternalPlayback),
+            for: .touchUpInside
+        )
+
+        volumeView = MPVolumeView(frame: .zero)
+        volumeView.translatesAutoresizingMaskIntoConstraints = false
+        volumeView.showsVolumeSlider = true
+        volumeView.showsRouteButton = false
+        volumeView.tintColor = .white
+
+        mediaControls.contentView.addSubview(playPauseButton)
+        mediaControls.contentView.addSubview(volumeView)
+        view.addSubview(mediaControls)
+
+        NSLayoutConstraint.activate([
+            mediaControls.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: 18
+            ),
+            mediaControls.bottomAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.bottomAnchor,
+                constant: -18
+            ),
+            mediaControls.widthAnchor.constraint(equalToConstant: 285),
+            mediaControls.heightAnchor.constraint(equalToConstant: 52),
+
+            playPauseButton.leadingAnchor.constraint(
+                equalTo: mediaControls.contentView.leadingAnchor,
+                constant: 10
+            ),
+            playPauseButton.centerYAnchor.constraint(
+                equalTo: mediaControls.contentView.centerYAnchor
+            ),
+            playPauseButton.widthAnchor.constraint(equalToConstant: 42),
+            playPauseButton.heightAnchor.constraint(equalToConstant: 42),
+
+            volumeView.leadingAnchor.constraint(
+                equalTo: playPauseButton.trailingAnchor,
+                constant: 8
+            ),
+            volumeView.trailingAnchor.constraint(
+                equalTo: mediaControls.contentView.trailingAnchor,
+                constant: -14
+            ),
+            volumeView.centerYAnchor.constraint(
+                equalTo: mediaControls.contentView.centerYAnchor
+            ),
+            volumeView.heightAnchor.constraint(equalToConstant: 40)
+        ])
+    }
+
+    @objc private func toggleExternalPlayback() {
+        guard let sendCommand = mediaRemoteSendCommand else {
+            showMediaControlUnavailable()
+            return
+        }
+
+        let accepted = sendCommand(2, nil)
+
+        guard accepted != 0 else {
+            showMediaControlUnavailable()
+            return
+        }
+
+        UIView.animate(
+            withDuration: 0.08,
+            animations: {
+                self.playPauseButton.transform =
+                    CGAffineTransform(scaleX: 0.82, y: 0.82)
+            },
+            completion: { _ in
+                UIView.animate(withDuration: 0.10) {
+                    self.playPauseButton.transform = .identity
+                }
+            }
+        )
+    }
+
+    private func showMediaControlUnavailable() {
+        guard presentedViewController == nil else { return }
+
+        let alert = UIAlertController(
+            title: "Play/Pause unavailable",
+            message:
+                "This iPad blocked direct control of another app's playback. " +
+                "The volume slider will still work normally.",
+            preferredStyle: .alert
+        )
+
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+    }
+
     override var prefersStatusBarHidden: Bool {
         true
     }
@@ -126,6 +274,10 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
     deinit {
         UIApplication.shared.isIdleTimerDisabled = false
+
+        if let mediaRemoteHandle {
+            dlclose(mediaRemoteHandle)
+        }
     }
 
     func webView(
