@@ -27,6 +27,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var artworkView: UIImageView!
     private var webView: WKWebView!
     private var errorLabel: UILabel!
+    private var artworkDebugLabel: UILabel!
 
     private var mediaControls: UIVisualEffectView!
     private var previousButton: UIButton!
@@ -48,14 +49,17 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         @convention(c) (Int32, UnsafeRawPointer?) -> UInt8
 
     private typealias MRMediaRemoteGetNowPlayingInfo =
-        @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+        @convention(c) (
+            DispatchQueue,
+            @escaping @convention(block) ([String: Any]) -> Void
+        ) -> Void
 
     private typealias MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork =
         @convention(c) (
             UnsafeRawPointer?,
             UnsafeRawPointer?,
             DispatchQueue,
-            @escaping (NSDictionary?, NSData?) -> Void
+            @escaping @convention(block) (NSDictionary?, NSData?) -> Void
         ) -> Void
 
     private typealias MRMediaRemoteRegisterForNowPlayingNotifications =
@@ -115,6 +119,30 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             errorLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
             errorLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 30),
             errorLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -30)
+        ])
+
+        artworkDebugLabel = UILabel()
+        artworkDebugLabel.translatesAutoresizingMaskIntoConstraints = false
+        artworkDebugLabel.textColor = .systemYellow
+        artworkDebugLabel.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
+        artworkDebugLabel.numberOfLines = 0
+        artworkDebugLabel.textAlignment = .left
+        artworkDebugLabel.backgroundColor = UIColor.black.withAlphaComponent(0.72)
+        artworkDebugLabel.layer.cornerRadius = 8
+        artworkDebugLabel.clipsToBounds = true
+        artworkDebugLabel.text = "ART DEBUG: starting..."
+        view.addSubview(artworkDebugLabel)
+
+        NSLayoutConstraint.activate([
+            artworkDebugLabel.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: 18
+            ),
+            artworkDebugLabel.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: 18
+            ),
+            artworkDebugLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 510)
         ])
 
         setupMediaRemote()
@@ -182,11 +210,23 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }.resume()
     }
 
+    private func setArtworkDebug(_ text: String) {
+        DispatchQueue.main.async {
+            guard self.artworkView.image == nil else {
+                self.artworkDebugLabel.isHidden = true
+                return
+            }
+            self.artworkDebugLabel.isHidden = false
+            self.artworkDebugLabel.text = "ART DEBUG\n" + text
+        }
+    }
+
     private func setupMediaRemote() {
         let frameworkPath =
             "/System/Library/PrivateFrameworks/MediaRemote.framework/MediaRemote"
 
         guard let handle = dlopen(frameworkPath, RTLD_NOW) else {
+            setArtworkDebug("MediaRemote failed to load")
             return
         }
 
@@ -215,6 +255,12 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 to: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork.self
             )
         }
+
+        setArtworkDebug(
+            "MediaRemote loaded\n" +
+            "legacyInfo: \(mediaRemoteGetNowPlayingInfo != nil)\n" +
+            "optionalArtwork: \(mediaRemoteGetNowPlayingInfoWithArtwork != nil)"
+        )
 
         if let registerSymbol = dlsym(
             handle,
@@ -254,6 +300,16 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 guard let self else { return }
 
                 let info = infoObject as? [String: Any] ?? [:]
+                let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String ?? "<nil>"
+                let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? "<nil>"
+                let artBytes = (artworkObject as Data?)?.count ?? 0
+                self.setArtworkDebug(
+                    "optional callback fired\n" +
+                    "keys: \(info.count)\n" +
+                    "title: \(title)\n" +
+                    "artist: \(artist)\n" +
+                    "separate artwork bytes: \(artBytes)"
+                )
 
                 if let data = artworkObject as Data?,
                    let image = UIImage(data: data) {
@@ -280,6 +336,14 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         getNowPlayingInfo(DispatchQueue.main) { [weak self] info in
+            let title = info["kMRMediaRemoteNowPlayingInfoTitle"] as? String ?? "<nil>"
+            let artist = info["kMRMediaRemoteNowPlayingInfoArtist"] as? String ?? "<nil>"
+            self?.setArtworkDebug(
+                "legacy callback fired\n" +
+                "keys: \(info.count)\n" +
+                "title: \(title)\n" +
+                "artist: \(artist)"
+            )
             self?.processArtworkMetadataFallback(info)
         }
     }
@@ -331,6 +395,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         let cleanAlbum = album?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         guard !cleanTitle.isEmpty || !cleanArtist.isEmpty else {
+            setArtworkDebug("No title/artist metadata available for web fallback")
             return
         }
 
@@ -347,6 +412,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
         artworkLookupInFlight = true
         lastArtworkLookupKey = lookupKey
+        setArtworkDebug(
+            "No direct artwork\nSearching Apple catalog for:\n\(cleanArtist) — \(cleanTitle)"
+        )
 
         var components = URLComponents(
             string: "https://itunes.apple.com/search"
@@ -383,8 +451,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                 let results = json["results"] as? [[String: Any]],
                 !results.isEmpty
             else {
+                self.setArtworkDebug("Apple catalog fallback returned no results")
                 return
             }
+
+            self.setArtworkDebug(
+                "Apple catalog returned \(results.count) result(s)\nDownloading best artwork..."
+            )
 
             func normalized(_ value: String?) -> String {
                 (value ?? "")
@@ -467,6 +540,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
                     return
                 }
 
+                self.setArtworkDebug(
+                    "Artwork downloaded: \(imageData.count) bytes"
+                )
                 self.setArtwork(image, data: imageData)
             }.resume()
         }.resume()
@@ -479,6 +555,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             }
 
             self.lastArtworkData = data
+            self.artworkDebugLabel.isHidden = image != nil
 
             UIView.transition(
                 with: self.artworkView,
