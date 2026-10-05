@@ -303,10 +303,15 @@
           Intentionally subtle so we only smooth the corner cutout
           without changing the movement or making the screen look pill-shaped.
         */
-        var screenCornerRadius = 24;
+        /*
+          Use the SAME modest radius for both the outer perimeter and
+          the inner follow-edge. The previous version reduced the inner
+          radius, which is what created that visible square cutout.
+        */
+        var screenCornerRadius = 32;
         var r = Math.max(
           0,
-          Math.min(screenCornerRadius - inset * 0.15, halfW, halfH)
+          Math.min(screenCornerRadius, halfW, halfH)
         );
 
         if (r < 0.001) {
