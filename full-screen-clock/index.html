@@ -50,7 +50,8 @@
       pointer-events: none;
     }
 
-    #guide-path {
+    #physical-path,
+    #angle-path {
       fill: none;
       stroke: none;
     }
@@ -117,8 +118,18 @@
 <body>
   <main id="app" aria-label="Full screen clock">
     <svg id="edge-svg" aria-hidden="true" preserveAspectRatio="none">
-      <path id="guide-path"></path>
-      <path id="second-block"></path>
+      <defs>
+        <clipPath id="screen-clip">
+          <rect id="screen-clip-rect"></rect>
+        </clipPath>
+      </defs>
+
+      <path id="physical-path"></path>
+      <path id="angle-path"></path>
+
+      <g clip-path="url(#screen-clip)">
+        <path id="second-block"></path>
+      </g>
     </svg>
 
     <div id="clock">12:00 AM</div>
@@ -130,12 +141,14 @@
       var clock = document.getElementById('clock');
       var soundcloud = document.getElementById('soundcloud');
       var svg = document.getElementById('edge-svg');
-      var guidePath = document.getElementById('guide-path');
+      var physicalPath = document.getElementById('physical-path');
+      var anglePath = document.getElementById('angle-path');
       var secondBlock = document.getElementById('second-block');
+      var clipRect = document.getElementById('screen-clip-rect');
 
-      var totalLength = 0;
-      var blockLength = 40;
-      var blockThickness = 40;
+      var physicalLength = 0;
+      var angleLength = 0;
+      var blockSize = 40;
 
       function setClock(d) {
         var h = d.getHours();
@@ -146,7 +159,11 @@
         clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
-      function squircleScreenPath(w, h) {
+      /*
+        This is ONLY used for the marker's angle.
+        n = 2.6 keeps the long, exaggerated tilt you liked.
+      */
+      function squirclePath(w, h) {
         var cx = w / 2;
         var cy = h / 2;
         var a = w / 2;
@@ -171,133 +188,125 @@
         return parts.join(' ');
       }
 
-      function setupPath() {
+      /*
+        This is the ACTUAL position path.
+        It hugs the real screen edge and uses a clean rounded corner.
+      */
+      function roundedEdgePath(w, h, r) {
+        var cx = w / 2;
+
+        return [
+          'M', cx, 0,
+          'H', w - r,
+          'Q', w, 0, w, r,
+          'V', h - r,
+          'Q', w, h, w - r, h,
+          'H', r,
+          'Q', 0, h, 0, h - r,
+          'V', r,
+          'Q', 0, 0, r, 0,
+          'H', cx,
+          'Z'
+        ].join(' ');
+      }
+
+      function setupPaths() {
         var w = window.innerWidth;
         var h = window.innerHeight;
+        var cornerRadius = Math.max(34, Math.min(52, Math.min(w, h) * 0.05));
 
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-        guidePath.setAttribute('d', squircleScreenPath(w, h));
-        totalLength = guidePath.getTotalLength();
+
+        clipRect.setAttribute('x', '0');
+        clipRect.setAttribute('y', '0');
+        clipRect.setAttribute('width', w);
+        clipRect.setAttribute('height', h);
+        clipRect.setAttribute('rx', cornerRadius);
+        clipRect.setAttribute('ry', cornerRadius);
+
+        physicalPath.setAttribute('d', roundedEdgePath(w, h, cornerRadius));
+        anglePath.setAttribute('d', squirclePath(w, h));
+
+        physicalLength = physicalPath.getTotalLength();
+        angleLength = anglePath.getTotalLength();
 
         drawSecondBlock(new Date());
       }
 
-      function wrapLength(v) {
-        if (!totalLength) return 0;
-        v %= totalLength;
-        if (v < 0) v += totalLength;
+      function wrap(v, length) {
+        if (!length) return 0;
+        v %= length;
+        if (v < 0) v += length;
         return v;
       }
 
-      function pointAndInwardNormal(length) {
-        var s = wrapLength(length);
-        var delta = 0.75;
-
-        var p = guidePath.getPointAtLength(s);
-        var before = guidePath.getPointAtLength(wrapLength(s - delta));
-        var after = guidePath.getPointAtLength(wrapLength(s + delta));
+      function tangentAt(path, length, distance) {
+        var delta = 0.8;
+        var before = path.getPointAtLength(wrap(distance - delta, length));
+        var after = path.getPointAtLength(wrap(distance + delta, length));
 
         var tx = after.x - before.x;
         var ty = after.y - before.y;
         var mag = Math.hypot(tx, ty) || 1;
 
-        tx /= mag;
-        ty /= mag;
-
-        /* Clockwise path: rotate tangent +90° to point inward. */
-        var nx = -ty;
-        var ny = tx;
-
         return {
-          x: p.x,
-          y: p.y,
-          nx: nx,
-          ny: ny
-        };
-      }
-
-      function offsetPoint(length, offset) {
-        var p = pointAndInwardNormal(length);
-
-        return {
-          x: p.x + p.nx * offset,
-          y: p.y + p.ny * offset
+          x: tx / mag,
+          y: ty / mag
         };
       }
 
       function drawSecondBlock(d) {
-        if (!totalLength) return;
+        if (!physicalLength || !angleLength) return;
 
         var seconds = d.getSeconds() + d.getMilliseconds() / 1000;
-        var start = (seconds / 60) * totalLength;
+        var progress = seconds / 60;
 
         /*
-          Build a real solid strip instead of using SVG dashes.
-          The strip follows the squircle tangent continuously:
-          straight at each edge midpoint, progressively tilted toward
-          a corner, curved through it, then progressively straight again.
+          Position follows the clean rounded screen edge.
+          Angle follows the exaggerated squircle.
+          This keeps the long drawn-out tilt without letting the marker
+          drift inward or warp around the corners.
         */
-        var samples = 18;
-        var half = blockThickness / 2;
-        var outer = [];
-        var inner = [];
+        var centerDistance = progress * physicalLength;
+        var angleDistance = progress * angleLength;
 
-        /*
-          Keep the exaggerated squircle bend/orientation, but move the
-          whole marker outward until its midpoint sits on the actual
-          rectangular screen boundary. This preserves the long drawn-out
-          tilt while keeping the marker pushed against the edge.
-        */
-        var midDistance = start + blockLength / 2;
-        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
+        var center = physicalPath.getPointAtLength(centerDistance);
+        var tangent = tangentAt(anglePath, angleLength, angleDistance);
 
-        var w = window.innerWidth;
-        var h = window.innerHeight;
-        var cx = w / 2;
-        var cy = h / 2;
-        var dx = mid.x - cx;
-        var dy = mid.y - cy;
+        var nx = -tangent.y;
+        var ny = tangent.x;
+        var half = blockSize / 2;
 
-        var sx = Math.abs(dx) > 0.0001 ? (w / 2) / Math.abs(dx) : Infinity;
-        var sy = Math.abs(dy) > 0.0001 ? (h / 2) / Math.abs(dy) : Infinity;
-        var scaleToEdge = Math.min(sx, sy);
+        var p1 = {
+          x: center.x - tangent.x * half - nx * half,
+          y: center.y - tangent.y * half - ny * half
+        };
 
-        var edgeX = cx + dx * scaleToEdge;
-        var edgeY = cy + dy * scaleToEdge;
-        var pushX = edgeX - mid.x;
-        var pushY = edgeY - mid.y;
+        var p2 = {
+          x: center.x + tangent.x * half - nx * half,
+          y: center.y + tangent.y * half - ny * half
+        };
 
-        for (var i = 0; i <= samples; i++) {
-          var t = i / samples;
-          var distance = start + blockLength * t;
+        var p3 = {
+          x: center.x + tangent.x * half + nx * half,
+          y: center.y + tangent.y * half + ny * half
+        };
 
-          var o = offsetPoint(distance, -half);
-          var inn = offsetPoint(distance, half);
+        var p4 = {
+          x: center.x - tangent.x * half + nx * half,
+          y: center.y - tangent.y * half + ny * half
+        };
 
-          outer.push({
-            x: o.x + pushX,
-            y: o.y + pushY
-          });
-
-          inner.push({
-            x: inn.x + pushX,
-            y: inn.y + pushY
-          });
-        }
-
-        var parts = [];
-        parts.push('M ' + outer[0].x.toFixed(3) + ' ' + outer[0].y.toFixed(3));
-
-        for (var j = 1; j < outer.length; j++) {
-          parts.push('L ' + outer[j].x.toFixed(3) + ' ' + outer[j].y.toFixed(3));
-        }
-
-        for (var k = inner.length - 1; k >= 0; k--) {
-          parts.push('L ' + inner[k].x.toFixed(3) + ' ' + inner[k].y.toFixed(3));
-        }
-
-        parts.push('Z');
-        secondBlock.setAttribute('d', parts.join(' '));
+        secondBlock.setAttribute(
+          'd',
+          [
+            'M', p1.x.toFixed(3), p1.y.toFixed(3),
+            'L', p2.x.toFixed(3), p2.y.toFixed(3),
+            'L', p3.x.toFixed(3), p3.y.toFixed(3),
+            'L', p4.x.toFixed(3), p4.y.toFixed(3),
+            'Z'
+          ].join(' ')
+        );
       }
 
       function update() {
@@ -313,9 +322,9 @@
         window.location.href = 'https://soundcloud.com/';
       });
 
-      window.addEventListener('resize', setupPath);
+      window.addEventListener('resize', setupPaths);
 
-      setupPath();
+      setupPaths();
       update();
     })();
   </script>
