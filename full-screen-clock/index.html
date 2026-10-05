@@ -134,8 +134,11 @@
       }
 
       function roundedRectPath(x, y, w, h, r) {
+        var cx = x + (w / 2);
+
+        /* Start the perimeter at the exact top-center so 00 seconds lands here. */
         return [
-          'M', x + r, y,
+          'M', cx, y,
           'H', x + w - r,
           'Q', x + w, y, x + w, y + r,
           'V', y + h - r,
@@ -144,6 +147,7 @@
           'Q', x, y + h, x, y + h - r,
           'V', y + r,
           'Q', x, y, x + r, y,
+          'H', cx,
           'Z'
         ].join(' ');
       }
