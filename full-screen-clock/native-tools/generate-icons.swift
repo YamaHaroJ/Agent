@@ -39,33 +39,33 @@ func racingCPath(in rect: NSRect) -> NSBezierPath {
     }
 
     let path = NSBezierPath()
-    path.move(to: p(0.76, 0.76))
-    path.line(to: p(0.70, 0.61))
-    path.line(to: p(0.52, 0.61))
+    path.move(to: p(0.82, 0.73))
+    path.line(to: p(0.73, 0.57))
+    path.line(to: p(0.48, 0.57))
     path.curve(
-        to: p(0.43, 0.54),
-        controlPoint1: p(0.48, 0.61),
-        controlPoint2: p(0.45, 0.58)
+        to: p(0.39, 0.51),
+        controlPoint1: p(0.45, 0.57),
+        controlPoint2: p(0.41, 0.55)
     )
-    path.line(to: p(0.34, 0.42))
+    path.line(to: p(0.30, 0.43))
     path.curve(
-        to: p(0.37, 0.35),
-        controlPoint1: p(0.31, 0.38),
-        controlPoint2: p(0.32, 0.35)
+        to: p(0.33, 0.36),
+        controlPoint1: p(0.27, 0.40),
+        controlPoint2: p(0.28, 0.36)
     )
-    path.line(to: p(0.64, 0.35))
-    path.line(to: p(0.59, 0.23))
-    path.line(to: p(0.34, 0.23))
+    path.line(to: p(0.69, 0.36))
+    path.line(to: p(0.61, 0.24))
+    path.line(to: p(0.31, 0.24))
     path.curve(
-        to: p(0.20, 0.42),
-        controlPoint1: p(0.23, 0.23),
-        controlPoint2: p(0.16, 0.31)
+        to: p(0.17, 0.42),
+        controlPoint1: p(0.22, 0.24),
+        controlPoint2: p(0.15, 0.32)
     )
-    path.line(to: p(0.36, 0.66))
+    path.line(to: p(0.31, 0.62))
     path.curve(
-        to: p(0.57, 0.76),
-        controlPoint1: p(0.41, 0.73),
-        controlPoint2: p(0.48, 0.76)
+        to: p(0.57, 0.73),
+        controlPoint1: p(0.37, 0.70),
+        controlPoint2: p(0.47, 0.73)
     )
     path.close()
     return path
@@ -124,8 +124,9 @@ func makeMaster(kind: String) -> NSImage {
 
     if kind == "ClockChromeC" {
         let bg = NSGradient(colors: [
-            NSColor(calibratedRed: 0.13, green: 0.15, blue: 0.17, alpha: 1),
-            NSColor(calibratedWhite: 0.01, alpha: 1)
+            NSColor(calibratedRed: 0.10, green: 0.15, blue: 0.20, alpha: 1),
+            NSColor(calibratedRed: 0.025, green: 0.045, blue: 0.065, alpha: 1),
+            NSColor(calibratedWhite: 0.005, alpha: 1)
         ])!
         bg.draw(in: canvas, angle: -55)
 
@@ -147,13 +148,46 @@ func makeMaster(kind: String) -> NSImage {
             angle: -90
         )
 
+        let flare = NSGradient(colors: [
+            NSColor.white.withAlphaComponent(0.80),
+            NSColor(calibratedRed: 0.40, green: 0.70, blue: 1.00, alpha: 0.24),
+            NSColor.clear
+        ])!
+        flare.draw(
+            in: NSBezierPath(
+                ovalIn: NSRect(x: 810, y: 300, width: 150, height: 150)
+            ),
+            relativeCenterPosition: NSPoint(x: 0, y: 0)
+        )
+
         addSubtleBorder(canvas)
     } else {
         NSColor.black.setFill()
         NSBezierPath(rect: canvas).fill()
 
         if kind == "ClockWordmark" {
+            let sweep = NSGradient(colors: [
+                NSColor.white.withAlphaComponent(0.00),
+                NSColor.white.withAlphaComponent(0.09),
+                NSColor.white.withAlphaComponent(0.00)
+            ])!
+            sweep.draw(
+                in: NSRect(x: 155, y: 300, width: 720, height: 430),
+                angle: -58
+            )
+
             drawCenteredWordmark("Clock", canvas: canvas)
+
+            let line = NSBezierPath()
+            line.move(to: NSPoint(x: 230, y: 365))
+            line.curve(
+                to: NSPoint(x: 825, y: 365),
+                controlPoint1: NSPoint(x: 420, y: 330),
+                controlPoint2: NSPoint(x: 650, y: 390)
+            )
+            line.lineWidth = 9
+            NSColor.white.withAlphaComponent(0.55).setStroke()
+            line.stroke()
         } else {
             let logo = racingCPath(in: canvas)
             NSColor.white.setFill()
