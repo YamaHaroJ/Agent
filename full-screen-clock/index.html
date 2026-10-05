@@ -57,6 +57,7 @@
       stroke-linecap: butt;
       stroke-linejoin: round;
       pointer-events: none;
+      visibility: hidden;
     }
 
     #clock {
@@ -193,6 +194,15 @@
         */
         secondPath.style.strokeDasharray =
           blockSize + ' ' + (totalLength - blockSize);
+
+        /*
+          Safari can briefly paint the dash pattern before its final
+          measured perimeter is ready. Reveal it only after setup is complete
+          so there is never a flash of multiple second markers.
+        */
+        requestAnimationFrame(function () {
+          secondPath.style.visibility = 'visible';
+        });
       }
 
       function setSecondBlock(d) {
