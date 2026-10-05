@@ -168,10 +168,9 @@
 
         totalLength = secondPath.getTotalLength();
 
-        /* Solid block length along the border */
-        segmentLength = Math.max(92, Math.min(145, totalLength * 0.055));
+        /* Keep the moving piece square on straight edges: 40px × 40px. */
+        segmentLength = blockThickness;
 
-        /* One solid dash + one huge gap = one moving block */
         secondPath.style.strokeDasharray =
           segmentLength + ' ' + (totalLength + segmentLength);
       }
