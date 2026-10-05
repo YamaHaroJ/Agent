@@ -41,10 +41,12 @@
     }
 
     #edge-svg {
-      position: absolute;
+      position: fixed;
       inset: 0;
-      width: 100%;
-      height: 100%;
+      width: 100vw;
+      height: 100vh;
+      width: 100lvw;
+      height: 100lvh;
       overflow: hidden;
       z-index: 1;
       pointer-events: none;
@@ -136,6 +138,8 @@
       var totalLength = 0;
       var blockLength = 40;
       var blockThickness = 40;
+      var layoutW = 0;
+      var layoutH = 0;
 
       function setClock(d) {
         var h = d.getHours();
@@ -172,8 +176,17 @@
       }
 
       function setupPath() {
-        var w = window.innerWidth;
-        var h = window.innerHeight;
+        /*
+          In iPad Home Screen mode window.innerHeight can stop above the
+          physical bottom safe-area. Use the rendered full-screen SVG size
+          instead so the second ribbon actually reaches the bottom edge.
+        */
+        var rect = svg.getBoundingClientRect();
+        var w = rect.width;
+        var h = rect.height;
+
+        layoutW = w;
+        layoutH = h;
 
         svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
         guidePath.setAttribute('d', squircleScreenPath(w, h));
@@ -278,8 +291,8 @@
       }
 
       function pointOnInsetRoundedRectFromCenter(source, inset) {
-        var w = window.innerWidth;
-        var h = window.innerHeight;
+        var w = layoutW || svg.getBoundingClientRect().width;
+        var h = layoutH || svg.getBoundingClientRect().height;
         var cx = w / 2;
         var cy = h / 2;
 
