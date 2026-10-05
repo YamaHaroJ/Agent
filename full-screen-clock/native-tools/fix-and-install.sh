@@ -1,18 +1,30 @@
 #!/bin/zsh
 set -euo pipefail
 
-if [[ -d "/Applications/Xcode.app/Contents/Developer" ]]; then
-  export DEVELOPER_DIR="/Applications/Xcode.app/Contents/Developer"
-else
-  XCODE_APP="$(find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print -quit)"
-  if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP/Contents/Developer" ]]; then
-    echo "ERROR: Could not find Xcode in /Applications."
-    exit 1
-  fi
-  export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+XCODE_APP=""
+
+# Find the actual Xcode app wherever it was installed.
+XCODE_APP="$(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode"' 2>/dev/null | head -n 1 || true)"
+
+if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP/Contents/Developer" ]]; then
+  for candidate in     /Applications/Xcode*.app     "$HOME"/Applications/Xcode*.app     "$HOME"/Downloads/Xcode*.app     "$HOME"/Desktop/Xcode*.app
+  do
+    if [[ -d "$candidate/Contents/Developer" ]]; then
+      XCODE_APP="$candidate"
+      break
+    fi
+  done
 fi
 
-echo "Using Xcode developer directory: $DEVELOPER_DIR"
+if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP/Contents/Developer" ]]; then
+  echo "ERROR: Could not locate the installed Xcode app."
+  echo "Open Xcode once, then run this installer again."
+  exit 1
+fi
+
+export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
+echo "Using Xcode: $XCODE_APP"
+echo "Using developer directory: $DEVELOPER_DIR"
 
 PROJECT_ROOT="$HOME/Documents/Clock"
 PROJECT="$PROJECT_ROOT/Clock.xcodeproj"
