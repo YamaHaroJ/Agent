@@ -37,6 +37,7 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
     private var mediaRemoteGetNowPlayingInfo: MRMediaRemoteGetNowPlayingInfo?
+    private var mediaRemoteGetNowPlayingInfoWithArtwork: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork?
     private var mediaRemoteRegisterForNotifications: MRMediaRemoteRegisterForNowPlayingNotifications?
     private var artworkTimer: Timer?
     private var lastArtworkData: Data?
@@ -48,6 +49,14 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
 
     private typealias MRMediaRemoteGetNowPlayingInfo =
         @convention(c) (DispatchQueue, @escaping ([String: Any]) -> Void) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork =
+        @convention(c) (
+            UnsafeRawPointer?,
+            UnsafeRawPointer?,
+            DispatchQueue,
+            @escaping (NSDictionary?, NSData?) -> Void
+        ) -> Void
 
     private typealias MRMediaRemoteRegisterForNowPlayingNotifications =
         @convention(c) (DispatchQueue) -> Void
@@ -197,6 +206,16 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let artworkInfoSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork"
+        ) {
+            mediaRemoteGetNowPlayingInfoWithArtwork = unsafeBitCast(
+                artworkInfoSymbol,
+                to: MRMediaRemoteGetNowPlayingInfoWithOptionalArtwork.self
+            )
+        }
+
         if let registerSymbol = dlsym(
             handle,
             "MRMediaRemoteRegisterForNowPlayingNotifications"
@@ -221,46 +240,85 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
+        // iPadOS 26 exposes artwork separately from the legacy now-playing
+        // dictionary on some players. Apple itself uses this four-argument
+        // MediaRemote call with the first two parameters nil for the current
+        // system player.
+        if let getNowPlayingInfoWithArtwork =
+            mediaRemoteGetNowPlayingInfoWithArtwork {
+            getNowPlayingInfoWithArtwork(
+                nil,
+                nil,
+                DispatchQueue.main
+            ) { [weak self] infoObject, artworkObject in
+                guard let self else { return }
+
+                let info = infoObject as? [String: Any] ?? [:]
+
+                if let data = artworkObject as Data?,
+                   let image = UIImage(data: data) {
+                    self.lastArtworkLookupKey = nil
+                    self.setArtwork(image, data: data)
+                    return
+                }
+
+                if let data =
+                    info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data,
+                   let image = UIImage(data: data) {
+                    self.lastArtworkLookupKey = nil
+                    self.setArtwork(image, data: data)
+                    return
+                }
+
+                self.processArtworkMetadataFallback(info)
+            }
+            return
+        }
+
         guard let getNowPlayingInfo = mediaRemoteGetNowPlayingInfo else {
             return
         }
 
         getNowPlayingInfo(DispatchQueue.main) { [weak self] info in
-            guard let self else { return }
+            self?.processArtworkMetadataFallback(info)
+        }
+    }
 
-            var artworkData =
-                info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
+    private func processArtworkMetadataFallback(
+        _ info: [String: Any]
+    ) {
+        var artworkData =
+            info["kMRMediaRemoteNowPlayingInfoArtworkData"] as? Data
 
-            if artworkData == nil {
-                for value in info.values {
-                    if let data = value as? Data,
-                       UIImage(data: data) != nil {
-                        artworkData = data
-                        break
-                    }
+        if artworkData == nil {
+            for value in info.values {
+                if let data = value as? Data,
+                   UIImage(data: data) != nil {
+                    artworkData = data
+                    break
                 }
             }
-
-            if let artworkData,
-               let image = UIImage(data: artworkData) {
-                self.lastArtworkLookupKey = nil
-                self.setArtwork(image, data: artworkData)
-                return
-            }
-
-            let title =
-                info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
-            let artist =
-                info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
-            let album =
-                info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String
-
-            self.fetchArtworkFallback(
-                title: title,
-                artist: artist,
-                album: album
-            )
         }
+
+        if let artworkData,
+           let image = UIImage(data: artworkData) {
+            lastArtworkLookupKey = nil
+            setArtwork(image, data: artworkData)
+            return
+        }
+
+        let title =
+            info["kMRMediaRemoteNowPlayingInfoTitle"] as? String
+        let artist =
+            info["kMRMediaRemoteNowPlayingInfoArtist"] as? String
+        let album =
+            info["kMRMediaRemoteNowPlayingInfoAlbum"] as? String
+
+        fetchArtworkFallback(
+            title: title,
+            artist: artist,
+            album: album
+        )
     }
 
     private func fetchArtworkFallback(
