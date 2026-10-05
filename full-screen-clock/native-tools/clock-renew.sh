@@ -25,13 +25,13 @@ source "$CONFIG"
 : "${DEVICE_ID:?DEVICE_ID missing from config}"
 : "${RENEW_AFTER_DAYS:=5}"
 
-XCODE_DEV="/Applications/Xcode.app/Contents/Developer"
-if [[ ! -d "$XCODE_DEV" ]]; then
-  log "Xcode.app not found in /Applications; skipping."
+XCODE_APP="$(mdfind 'kMDItemCFBundleIdentifier == "com.apple.dt.Xcode"' 2>/dev/null | head -n 1 || true)"
+if [[ -z "$XCODE_APP" || ! -d "$XCODE_APP/Contents/Developer" ]]; then
+  log "Xcode app could not be located; skipping."
   exit 0
 fi
 
-export DEVELOPER_DIR="$XCODE_DEV"
+export DEVELOPER_DIR="$XCODE_APP/Contents/Developer"
 
 if [[ ! -e "$PROJECT_PATH" ]]; then
   log "Project not found: $PROJECT_PATH"
