@@ -92,11 +92,21 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func loadClock() {
-        let sourceURL = URL(
+        var components = URLComponents(
             string: "https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/index.html"
         )!
+        components.queryItems = [
+            URLQueryItem(name: "v", value: String(Int(Date().timeIntervalSince1970)))
+        ]
 
-        URLSession.shared.dataTask(with: sourceURL) { [weak self] data, _, error in
+        var request = URLRequest(
+            url: components.url!,
+            cachePolicy: .reloadIgnoringLocalCacheData,
+            timeoutInterval: 30
+        )
+        request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, _, error in
             guard let self else { return }
 
             guard
