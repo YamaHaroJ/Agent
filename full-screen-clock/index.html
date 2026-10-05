@@ -242,12 +242,47 @@
         var outer = [];
         var inner = [];
 
+        /*
+          Keep the exaggerated squircle bend/orientation, but move the
+          whole marker outward until its midpoint sits on the actual
+          rectangular screen boundary. This preserves the long drawn-out
+          tilt while keeping the marker pushed against the edge.
+        */
+        var midDistance = start + blockLength / 2;
+        var mid = guidePath.getPointAtLength(wrapLength(midDistance));
+
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        var cx = w / 2;
+        var cy = h / 2;
+        var dx = mid.x - cx;
+        var dy = mid.y - cy;
+
+        var sx = Math.abs(dx) > 0.0001 ? (w / 2) / Math.abs(dx) : Infinity;
+        var sy = Math.abs(dy) > 0.0001 ? (h / 2) / Math.abs(dy) : Infinity;
+        var scaleToEdge = Math.min(sx, sy);
+
+        var edgeX = cx + dx * scaleToEdge;
+        var edgeY = cy + dy * scaleToEdge;
+        var pushX = edgeX - mid.x;
+        var pushY = edgeY - mid.y;
+
         for (var i = 0; i <= samples; i++) {
           var t = i / samples;
           var distance = start + blockLength * t;
 
-          outer.push(offsetPoint(distance, -half));
-          inner.push(offsetPoint(distance, half));
+          var o = offsetPoint(distance, -half);
+          var inn = offsetPoint(distance, half);
+
+          outer.push({
+            x: o.x + pushX,
+            y: o.y + pushY
+          });
+
+          inner.push({
+            x: inn.x + pushX,
+            y: inn.y + pushY
+          });
         }
 
         var parts = [];
