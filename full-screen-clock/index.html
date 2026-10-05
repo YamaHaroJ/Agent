@@ -9,12 +9,6 @@
   <meta name="theme-color" content="#000000" />
   <title>Full Screen Clock</title>
   <style>
-    :root {
-      --tick-short: 8px;
-      --tick-long: 16px;
-      --edge: max(4px, env(safe-area-inset-top));
-    }
-
     * { box-sizing: border-box; }
 
     html, body {
@@ -59,49 +53,21 @@
       z-index: 2;
     }
 
-    #ticks {
+    #second-segment {
       position: absolute;
-      inset: 0;
-      z-index: 1;
+      z-index: 3;
+      background: rgba(255,255,255,.95);
+      border-radius: 999px;
+      box-shadow: 0 0 10px rgba(255,255,255,.18);
       pointer-events: none;
     }
-
-    .tick {
-      position: absolute;
-      background: rgba(255,255,255,.22);
-      transition: background .12s ease, opacity .12s ease;
-    }
-
-    .tick.active {
-      background: #fff;
-      opacity: 1;
-    }
-
-    .tick.top, .tick.bottom {
-      width: 2px;
-      height: var(--tick-short);
-      transform: translateX(-50%);
-    }
-    .tick.top { top: 0; }
-    .tick.bottom { bottom: 0; }
-
-    .tick.left, .tick.right {
-      width: var(--tick-short);
-      height: 2px;
-      transform: translateY(-50%);
-    }
-    .tick.left { left: 0; }
-    .tick.right { right: 0; }
-
-    .tick.major.top, .tick.major.bottom { height: var(--tick-long); }
-    .tick.major.left, .tick.major.right { width: var(--tick-long); }
 
     #soundcloud {
       position: absolute;
       left: 50%;
       bottom: calc(18px + env(safe-area-inset-bottom));
       transform: translateX(-50%);
-      z-index: 3;
+      z-index: 4;
       border: 1px solid rgba(255,255,255,.34);
       background: rgba(255,255,255,.09);
       color: #fff;
@@ -131,80 +97,82 @@
 </head>
 <body>
   <main id="app" aria-label="Full screen clock">
-    <div id="ticks" aria-hidden="true"></div>
+    <div id="second-segment" aria-hidden="true"></div>
     <div id="clock">12:00:00 AM</div>
-
     <button id="soundcloud" type="button">Open SoundCloud</button>
   </main>
 
   <script>
-    const clock = document.getElementById('clock');
-    const ticks = document.getElementById('ticks');
-    const soundcloud = document.getElementById('soundcloud');
+    (function () {
+      var clock = document.getElementById('clock');
+      var segment = document.getElementById('second-segment');
+      var soundcloud = document.getElementById('soundcloud');
 
-    const tickEls = [];
-
-    function buildTicks() {
-      ticks.replaceChildren();
-      tickEls.length = 0;
-
-      for (let i = 0; i < 60; i++) {
-        const t = document.createElement('span');
-        t.className = 'tick' + (i % 5 === 0 ? ' major' : '');
-
-        const sideIndex = Math.floor(i / 15);
-        const pos = i % 15;
-        const pct = (pos / 15) * 100;
-
-        if (sideIndex === 0) {
-          t.classList.add('top');
-          t.style.left = pct + '%';
-        } else if (sideIndex === 1) {
-          t.classList.add('right');
-          t.style.top = pct + '%';
-        } else if (sideIndex === 2) {
-          t.classList.add('bottom');
-          t.style.right = pct + '%';
-        } else {
-          t.classList.add('left');
-          t.style.bottom = pct + '%';
-        }
-
-        ticks.appendChild(t);
-        tickEls.push(t);
+      function setClock(d) {
+        var h = d.getHours();
+        var m = String(d.getMinutes()).padStart(2, '0');
+        var s = String(d.getSeconds()).padStart(2, '0');
+        var suffix = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        clock.textContent = h + ':' + m + ':' + s + ' ' + suffix;
       }
-    }
 
-    function updateClock() {
-      const d = new Date();
-      let h = d.getHours();
-      const m = String(d.getMinutes()).padStart(2, '0');
-      const s = String(d.getSeconds()).padStart(2, '0');
-      const suffix = h >= 12 ? 'PM' : 'AM';
-      h = h % 12 || 12;
+      function setSegment(second) {
+        var w = window.innerWidth;
+        var h = window.innerHeight;
+        var longSide = Math.max(w, h);
+        var length = Math.max(42, Math.min(longSide * 0.055, 92));
+        var thickness = 4;
+        var side = Math.floor(second / 15);
+        var step = second % 15;
+        var progress = step / 14;
 
-      clock.textContent = h + ':' + m + ':' + s + ' ' + suffix;
+        segment.style.left = 'auto';
+        segment.style.right = 'auto';
+        segment.style.top = 'auto';
+        segment.style.bottom = 'auto';
 
-      const sec = d.getSeconds();
-      tickEls.forEach((el, i) => el.classList.toggle('active', i === sec));
-    }
+        if (side === 0) {
+          var x1 = progress * (w - length);
+          segment.style.width = length + 'px';
+          segment.style.height = thickness + 'px';
+          segment.style.left = x1 + 'px';
+          segment.style.top = '0px';
+        } else if (side === 1) {
+          var y1 = progress * (h - length);
+          segment.style.width = thickness + 'px';
+          segment.style.height = length + 'px';
+          segment.style.right = '0px';
+          segment.style.top = y1 + 'px';
+        } else if (side === 2) {
+          var x2 = progress * (w - length);
+          segment.style.width = length + 'px';
+          segment.style.height = thickness + 'px';
+          segment.style.right = x2 + 'px';
+          segment.style.bottom = '0px';
+        } else {
+          var y2 = progress * (h - length);
+          segment.style.width = thickness + 'px';
+          segment.style.height = length + 'px';
+          segment.style.left = '0px';
+          segment.style.bottom = y2 + 'px';
+        }
+      }
 
-    function startClock() {
-      updateClock();
-      const delay = 1000 - (Date.now() % 1000);
-      setTimeout(() => {
-        updateClock();
-        setInterval(updateClock, 1000);
-      }, delay);
-    }
+      function update() {
+        var now = new Date();
+        setClock(now);
+        setSegment(now.getSeconds());
+      }
 
-    soundcloud.addEventListener('click', () => {
-      window.location.href = 'https://soundcloud.com/';
-    });
+      soundcloud.addEventListener('click', function () {
+        window.location.href = 'https://soundcloud.com/';
+      });
 
-    buildTicks();
-    startClock();
-    window.addEventListener('resize', buildTicks);
+      update();
+      window.setInterval(update, 250);
+      window.addEventListener('resize', update);
+    })();
   </script>
 </body>
 </html>
