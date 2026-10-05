@@ -42,6 +42,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     private var mediaRemoteGetLocalOrigin: MRMediaRemoteGetLocalOrigin?
     private var mediaRemoteGetNowPlayingArtwork: MRMediaRemoteGetNowPlayingArtwork?
     private var mediaRemoteGetNowPlayingClient: MRMediaRemoteGetNowPlayingClient?
+    private var mediaRemoteGetNowPlayingClients: MRMediaRemoteGetNowPlayingClients?
+    private var mediaRemoteGetPlayerForClient: MRMediaRemoteGetNowPlayingPlayerForClient?
+    private var mediaRemoteGetInfoForPlayerSimple: MRMediaRemoteGetNowPlayingInfoForPlayerSimple?
     private var mediaRemoteGetInfoForClient: MRMediaRemoteGetNowPlayingInfoForClient?
     private var mediaRemoteGetAppDisplayID: MRMediaRemoteGetNowPlayingApplicationDisplayID?
     private var mediaRemoteGetInfoForApp: MRMediaRemoteGetNowPlayingInfoForApp?
@@ -86,6 +89,28 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         @convention(c) (
             DispatchQueue,
             @escaping @convention(block) (AnyObject?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingClients =
+        @convention(c) (
+            DispatchQueue,
+            @escaping @convention(block) (NSArray?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingPlayerForClient =
+        @convention(c) (
+            AnyObject,
+            UnsafeRawPointer?,
+            DispatchQueue,
+            @escaping @convention(block) (AnyObject?) -> Void
+        ) -> Void
+
+    private typealias MRMediaRemoteGetNowPlayingInfoForPlayerSimple =
+        @convention(c) (
+            AnyObject,
+            Bool,
+            DispatchQueue,
+            @escaping @convention(block) (NSDictionary?) -> Void
         ) -> Void
 
     private typealias MRMediaRemoteGetNowPlayingInfoForClient =
@@ -867,6 +892,36 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             )
         }
 
+        if let getClientsSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingClients"
+        ) {
+            mediaRemoteGetNowPlayingClients = unsafeBitCast(
+                getClientsSymbol,
+                to: MRMediaRemoteGetNowPlayingClients.self
+            )
+        }
+
+        if let getPlayerForClientSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingPlayerForClient"
+        ) {
+            mediaRemoteGetPlayerForClient = unsafeBitCast(
+                getPlayerForClientSymbol,
+                to: MRMediaRemoteGetNowPlayingPlayerForClient.self
+            )
+        }
+
+        if let simplePlayerInfoSymbol = dlsym(
+            handle,
+            "MRMediaRemoteGetNowPlayingInfoForPlayer"
+        ) {
+            mediaRemoteGetInfoForPlayerSimple = unsafeBitCast(
+                simplePlayerInfoSymbol,
+                to: MRMediaRemoteGetNowPlayingInfoForPlayerSimple.self
+            )
+        }
+
         if let getClientSymbol = dlsym(
             handle,
             "MRMediaRemoteGetNowPlayingClient"
@@ -1006,6 +1061,9 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
             "MediaRemote loaded\n" +
             "direct artwork: \(mediaRemoteGetNowPlayingArtwork != nil)\n" +
             "now-playing client: \(mediaRemoteGetNowPlayingClient != nil)\n" +
+            "all clients: \(mediaRemoteGetNowPlayingClients != nil)\n" +
+            "player-for-client: \(mediaRemoteGetPlayerForClient != nil)\n" +
+            "player info(simple): \(mediaRemoteGetInfoForPlayerSimple != nil)\n" +
             "client info: \(mediaRemoteGetInfoForClient != nil)\n" +
             "app display ID: \(mediaRemoteGetAppDisplayID != nil)\n" +
             "app info: \(mediaRemoteGetInfoForApp != nil)\n" +
@@ -1029,9 +1087,13 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
     }
 
     private func refreshArtwork() {
-        // Ask for the active app's bundle identifier, then query that app
-        // directly for now-playing info/artwork. This avoids relying on the
-        // now-playing-client symbol, which is absent on this iPad build.
+        // Enumerate every registered Now Playing client, resolve each client's
+        // player, then request metadata with includeArtwork=true. This is the
+        // exact per-player call chain used by working MediaRemote adapters.
+        if tryEnumeratedNowPlayingClients() {
+            return
+        }
+
         if tryAppSpecificNowPlaying() {
             return
         }
@@ -1057,6 +1119,188 @@ final class FullScreenClockViewController: UIViewController, WKNavigationDelegat
         }
 
         refreshArtworkFromLegacyAPIs()
+    }
+
+    @discardableResult
+    private func tryEnumeratedNowPlayingClients() -> Bool {
+        guard
+            let getClients = mediaRemoteGetNowPlayingClients,
+            let getPlayerForClient = mediaRemoteGetPlayerForClient,
+            let getInfoForPlayer = mediaRemoteGetInfoForPlayerSimple,
+            let playerPathClass = NSClassFromString("MRPlayerPath")
+        else {
+            return false
+        }
+
+        getClients(DispatchQueue.main) { [weak self] clients in
+            guard let self else { return }
+
+            let allClients = (clients as? [AnyObject]) ?? []
+
+            guard !allClients.isEmpty else {
+                self.setArtworkDebug(
+                    "ENUM ROUTE\n" +
+                    "clients: 0"
+                )
+                return
+            }
+
+            var completed = 0
+            var summaries: [String] = []
+
+            for client in allClients {
+                var bundle = "<unknown>"
+                if let getBundleID = self.mediaRemoteClientBundleID,
+                   let unmanaged = getBundleID(client) {
+                    bundle = unmanaged.takeUnretainedValue() as String
+                } else if let value =
+                    (client as? NSObject)?.value(forKey: "bundleIdentifier")
+                        as? String {
+                    bundle = value
+                }
+
+                getPlayerForClient(
+                    client,
+                    nil,
+                    DispatchQueue.main
+                ) { [weak self] player in
+                    guard let self else { return }
+
+                    guard let player else {
+                        completed += 1
+                        summaries.append("\(bundle): no player")
+                        if completed == allClients.count {
+                            self.setArtworkDebug(
+                                "ENUM ROUTE\n" +
+                                "clients: \(allClients.count)\n" +
+                                summaries.prefix(5).joined(separator: "\n")
+                            )
+                        }
+                        return
+                    }
+
+                    let classObject: AnyObject = playerPathClass as AnyObject
+                    let allocSelector = NSSelectorFromString("alloc")
+                    let initSelector =
+                        NSSelectorFromString("initWithOrigin:client:player:")
+
+                    guard
+                        let allocated = classObject
+                            .perform(allocSelector)?
+                            .takeUnretainedValue() as AnyObject?
+                    else {
+                        completed += 1
+                        summaries.append("\(bundle): playerPath alloc failed")
+                        return
+                    }
+
+                    typealias InitPlayerPathFunction =
+                        @convention(c) (
+                            AnyObject,
+                            Selector,
+                            AnyObject?,
+                            AnyObject,
+                            AnyObject
+                        ) -> AnyObject?
+
+                    let imp = (allocated as AnyObject).method(for: initSelector)
+                    let initPlayerPath = unsafeBitCast(
+                        imp,
+                        to: InitPlayerPathFunction.self
+                    )
+
+                    guard let playerPath = initPlayerPath(
+                        allocated,
+                        initSelector,
+                        nil,
+                        client,
+                        player
+                    ) else {
+                        completed += 1
+                        summaries.append("\(bundle): playerPath init failed")
+                        return
+                    }
+
+                    getInfoForPlayer(
+                        playerPath,
+                        true,
+                        DispatchQueue.main
+                    ) { [weak self] infoObject in
+                        guard let self else { return }
+
+                        completed += 1
+                        let info = infoObject as? [String: Any] ?? [:]
+                        let title =
+                            info["kMRMediaRemoteNowPlayingInfoTitle"]
+                                as? String
+                        let artist =
+                            info["kMRMediaRemoteNowPlayingInfoArtist"]
+                                as? String
+
+                        var artworkData =
+                            info["kMRMediaRemoteNowPlayingInfoArtworkData"]
+                                as? Data
+
+                        if artworkData == nil {
+                            for value in info.values {
+                                if let data = value as? Data,
+                                   UIImage(data: data) != nil {
+                                    artworkData = data
+                                    break
+                                }
+                            }
+                        }
+
+                        if let artworkData,
+                           let image = UIImage(data: artworkData) {
+                            self.setArtworkDebug(
+                                "ENUM ROUTE SUCCESS\n" +
+                                "bundle: \(bundle)\n" +
+                                "title: \(title ?? "<nil>")\n" +
+                                "artist: \(artist ?? "<nil>")\n" +
+                                "artwork bytes: \(artworkData.count)"
+                            )
+                            self.setArtwork(image, data: artworkData)
+                            return
+                        }
+
+                        if title != nil || artist != nil {
+                            self.setArtworkDebug(
+                                "ENUM ROUTE METADATA\n" +
+                                "bundle: \(bundle)\n" +
+                                "title: \(title ?? "<nil>")\n" +
+                                "artist: \(artist ?? "<nil>")\n" +
+                                "artwork bytes: 0"
+                            )
+                            self.fetchArtworkFallback(
+                                title: title,
+                                artist: artist,
+                                album:
+                                    info[
+                                        "kMRMediaRemoteNowPlayingInfoAlbum"
+                                    ] as? String
+                            )
+                            return
+                        }
+
+                        summaries.append(
+                            "\(bundle): keys=\(info.count), art=\(artworkData?.count ?? 0)"
+                        )
+
+                        if completed == allClients.count &&
+                           self.artworkView.image == nil {
+                            self.setArtworkDebug(
+                                "ENUM ROUTE\n" +
+                                "clients: \(allClients.count)\n" +
+                                summaries.prefix(6).joined(separator: "\n")
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        return true
     }
 
     @discardableResult
