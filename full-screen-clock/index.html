@@ -127,10 +127,9 @@
       function setClock(d) {
         var h = d.getHours();
         var m = String(d.getMinutes()).padStart(2, '0');
-        var s = String(d.getSeconds()).padStart(2, '0');
         var suffix = h >= 12 ? 'PM' : 'AM';
         h = h % 12 || 12;
-        clock.textContent = h + ':' + m + ':' + s + ' ' + suffix;
+        clock.textContent = h + ':' + m + ' ' + suffix;
       }
 
       function roundedRectPath(x, y, w, h, r) {
