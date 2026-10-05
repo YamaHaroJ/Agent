@@ -193,7 +193,7 @@ final class FullScreenClockViewController:
 
     @objc private func openSettings() {
         let sheet = UIAlertController(
-            title: "Clock Background",
+            title: "Clock Settings",
             message: nil,
             preferredStyle: .actionSheet
         )
@@ -220,6 +220,15 @@ final class FullScreenClockViewController:
 
         sheet.addAction(
             UIAlertAction(
+                title: "Change App Icon",
+                style: .default
+            ) { [weak self] _ in
+                self?.openIconPicker()
+            }
+        )
+
+        sheet.addAction(
+            UIAlertAction(
                 title: "Cancel",
                 style: .cancel
             )
@@ -231,6 +240,89 @@ final class FullScreenClockViewController:
         }
 
         present(sheet, animated: true)
+    }
+
+    private func openIconPicker() {
+        guard UIApplication.shared.supportsAlternateIcons else {
+            let alert = UIAlertController(
+                title: "App Icons Unavailable",
+                message: "This build does not include alternate app icons.",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "OK", style: .default))
+            present(alert, animated: true)
+            return
+        }
+
+        let current = UIApplication.shared.alternateIconName
+
+        let sheet = UIAlertController(
+            title: "App Icon",
+            message: "Pick a style. The Home Screen icon changes immediately.",
+            preferredStyle: .actionSheet
+        )
+
+        let choices: [(title: String, iconName: String?)] = [
+            ("Italic C", "ClockItalicC"),
+            ("Clock Wordmark", "ClockWordmark"),
+            ("Chrome C", "ClockChromeC"),
+            ("Default", nil)
+        ]
+
+        for choice in choices {
+            let isCurrent = current == choice.iconName
+            let title = isCurrent ? "✓ " + choice.title : choice.title
+
+            sheet.addAction(
+                UIAlertAction(
+                    title: title,
+                    style: .default
+                ) { [weak self] _ in
+                    self?.setAppIcon(choice.iconName)
+                }
+            )
+        }
+
+        sheet.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = settingsButton
+            popover.sourceRect = settingsButton.bounds
+        }
+
+        present(sheet, animated: true)
+    }
+
+    private func setAppIcon(_ iconName: String?) {
+        UIApplication.shared.setAlternateIconName(iconName) { [weak self] error in
+            guard let error else {
+                return
+            }
+
+            DispatchQueue.main.async {
+                guard let self else {
+                    return
+                }
+
+                let alert = UIAlertController(
+                    title: "Couldn't Change Icon",
+                    message: error.localizedDescription,
+                    preferredStyle: .alert
+                )
+                alert.addAction(
+                    UIAlertAction(
+                        title: "OK",
+                        style: .default
+                    )
+                )
+                self.present(alert, animated: true)
+            }
+        }
     }
 
     private func openPhotoPicker() {
