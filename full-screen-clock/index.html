@@ -225,6 +225,58 @@
         };
       }
 
+      function hitBoundaryFromInside(p, dx, dy, w, h) {
+        var bestT = Infinity;
+        var edge = '';
+        var t;
+
+        if (dx > 0.000001) {
+          t = (w - p.x) / dx;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'right'; }
+        } else if (dx < -0.000001) {
+          t = (0 - p.x) / dx;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'left'; }
+        }
+
+        if (dy > 0.000001) {
+          t = (h - p.y) / dy;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'bottom'; }
+        } else if (dy < -0.000001) {
+          t = (0 - p.y) / dy;
+          if (t >= 0 && t < bestT) { bestT = t; edge = 'top'; }
+        }
+
+        return {
+          x: p.x + dx * bestT,
+          y: p.y + dy * bestT,
+          edge: edge
+        };
+      }
+
+      function sharedCorner(edgeA, edgeB, w, h) {
+        if (
+          (edgeA === 'top' && edgeB === 'right') ||
+          (edgeA === 'right' && edgeB === 'top')
+        ) return { x: w, y: 0 };
+
+        if (
+          (edgeA === 'right' && edgeB === 'bottom') ||
+          (edgeA === 'bottom' && edgeB === 'right')
+        ) return { x: w, y: h };
+
+        if (
+          (edgeA === 'bottom' && edgeB === 'left') ||
+          (edgeA === 'left' && edgeB === 'bottom')
+        ) return { x: 0, y: h };
+
+        if (
+          (edgeA === 'left' && edgeB === 'top') ||
+          (edgeA === 'top' && edgeB === 'left')
+        ) return { x: 0, y: 0 };
+
+        return null;
+      }
+
       function drawSecondBlock(d) {
         if (!totalLength) return;
 
@@ -232,21 +284,14 @@
         var start = (seconds / 60) * totalLength;
 
         /*
-          Build a real solid strip instead of using SVG dashes.
-          The strip follows the squircle tangent continuously:
-          straight at each edge midpoint, progressively tilted toward
-          a corner, curved through it, then progressively straight again.
-        */
-        var samples = 18;
-        var half = blockThickness / 2;
-        var outer = [];
-        var inner = [];
+          Keep the long, exaggerated n=2.6 motion from the version you liked.
+          Only the block geometry changes here.
 
-        /*
-          Keep the exaggerated squircle bend/orientation, but move the
-          whole marker outward until its midpoint sits on the actual
-          rectangular screen boundary. This preserves the long drawn-out
-          tilt while keeping the marker pushed against the edge.
+          RULE:
+          - the INNER edge always stays a fixed 40px straight line
+          - that fixed edge always faces the exact center of the screen
+          - the other three sides are free to stretch and bend to meet the screen edge
+          - therefore the marker can never collapse into a triangle
         */
         var midDistance = start + blockLength / 2;
         var mid = guidePath.getPointAtLength(wrapLength(midDistance));
@@ -255,48 +300,106 @@
         var h = window.innerHeight;
         var cx = w / 2;
         var cy = h / 2;
-        var dx = mid.x - cx;
-        var dy = mid.y - cy;
 
-        var sx = Math.abs(dx) > 0.0001 ? (w / 2) / Math.abs(dx) : Infinity;
-        var sy = Math.abs(dy) > 0.0001 ? (h / 2) / Math.abs(dy) : Infinity;
+        /*
+          Push the marker center to the actual rectangular screen boundary
+          along the same center-to-marker ray.
+        */
+        var rx = mid.x - cx;
+        var ry = mid.y - cy;
+
+        var sx = Math.abs(rx) > 0.0001 ? (w / 2) / Math.abs(rx) : Infinity;
+        var sy = Math.abs(ry) > 0.0001 ? (h / 2) / Math.abs(ry) : Infinity;
         var scaleToEdge = Math.min(sx, sy);
 
-        var edgeX = cx + dx * scaleToEdge;
-        var edgeY = cy + dy * scaleToEdge;
-        var pushX = edgeX - mid.x;
-        var pushY = edgeY - mid.y;
+        var edgeX = cx + rx * scaleToEdge;
+        var edgeY = cy + ry * scaleToEdge;
 
-        for (var i = 0; i <= samples; i++) {
-          var t = i / samples;
-          var distance = start + blockLength * t;
+        /*
+          Inward direction is ALWAYS from the marker toward the exact center.
+          The fixed inner edge is perpendicular to this direction.
+        */
+        var inwardX = cx - edgeX;
+        var inwardY = cy - edgeY;
+        var inwardMag = Math.hypot(inwardX, inwardY) || 1;
 
-          var o = offsetPoint(distance, -half);
-          var inn = offsetPoint(distance, half);
+        inwardX /= inwardMag;
+        inwardY /= inwardMag;
 
-          outer.push({
-            x: o.x + pushX,
-            y: o.y + pushY
-          });
+        var tangentX = -inwardY;
+        var tangentY = inwardX;
 
-          inner.push({
-            x: inn.x + pushX,
-            y: inn.y + pushY
-          });
-        }
+        var half = blockLength / 2;
+
+        /*
+          Fixed inner edge: always 40px long, always flat.
+          On a middle edge this produces the original 40×40 square.
+        */
+        var innerCenterX = edgeX + inwardX * blockThickness;
+        var innerCenterY = edgeY + inwardY * blockThickness;
+
+        var innerA = {
+          x: innerCenterX - tangentX * half,
+          y: innerCenterY - tangentY * half
+        };
+
+        var innerB = {
+          x: innerCenterX + tangentX * half,
+          y: innerCenterY + tangentY * half
+        };
+
+        /*
+          The two side edges stretch outward until each end reaches
+          the real screen boundary.
+        */
+        var outerA = hitBoundaryFromInside(
+          innerA, -inwardX, -inwardY, w, h
+        );
+
+        var outerB = hitBoundaryFromInside(
+          innerB, -inwardX, -inwardY, w, h
+        );
 
         var parts = [];
-        parts.push('M ' + outer[0].x.toFixed(3) + ' ' + outer[0].y.toFixed(3));
 
-        for (var j = 1; j < outer.length; j++) {
-          parts.push('L ' + outer[j].x.toFixed(3) + ' ' + outer[j].y.toFixed(3));
+        parts.push(
+          'M ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3)
+        );
+
+        parts.push(
+          'L ' + outerA.x.toFixed(3) + ' ' + outerA.y.toFixed(3)
+        );
+
+        /*
+          If the two stretched sides hit adjacent screen edges,
+          the OUTER edge bends around that corner.
+          The fixed inner edge below never changes shape.
+        */
+        var corner = sharedCorner(outerA.edge, outerB.edge, w, h);
+
+        if (corner) {
+          parts.push(
+            'Q ' +
+            corner.x.toFixed(3) + ' ' + corner.y.toFixed(3) + ' ' +
+            outerB.x.toFixed(3) + ' ' + outerB.y.toFixed(3)
+          );
+        } else {
+          parts.push(
+            'L ' + outerB.x.toFixed(3) + ' ' + outerB.y.toFixed(3)
+          );
         }
 
-        for (var k = inner.length - 1; k >= 0; k--) {
-          parts.push('L ' + inner[k].x.toFixed(3) + ' ' + inner[k].y.toFixed(3));
-        }
+        parts.push(
+          'L ' + innerB.x.toFixed(3) + ' ' + innerB.y.toFixed(3)
+        );
+
+        /* This last edge is the unchanged fixed inner edge. */
+        parts.push(
+          'L ' + innerA.x.toFixed(3) + ' ' + innerA.y.toFixed(3)
+        );
 
         parts.push('Z');
+
         secondBlock.setAttribute('d', parts.join(' '));
       }
 
