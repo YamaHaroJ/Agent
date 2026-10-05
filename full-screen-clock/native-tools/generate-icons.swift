@@ -18,7 +18,6 @@ let slots: [Slot] = [
     .init(idiom: "iphone", size: "40x40", scale: "3x", pixels: 120, filename: "icon-40@3x.png"),
     .init(idiom: "iphone", size: "60x60", scale: "2x", pixels: 120, filename: "icon-60@2x.png"),
     .init(idiom: "iphone", size: "60x60", scale: "3x", pixels: 180, filename: "icon-60@3x.png"),
-
     .init(idiom: "ipad", size: "20x20", scale: "1x", pixels: 20, filename: "icon-20.png"),
     .init(idiom: "ipad", size: "20x20", scale: "2x", pixels: 40, filename: "icon-20@2x-ipad.png"),
     .init(idiom: "ipad", size: "29x29", scale: "1x", pixels: 29, filename: "icon-29.png"),
@@ -28,37 +27,93 @@ let slots: [Slot] = [
     .init(idiom: "ipad", size: "76x76", scale: "1x", pixels: 76, filename: "icon-76.png"),
     .init(idiom: "ipad", size: "76x76", scale: "2x", pixels: 152, filename: "icon-76@2x.png"),
     .init(idiom: "ipad", size: "83.5x83.5", scale: "2x", pixels: 167, filename: "icon-83.5@2x.png"),
-
     .init(idiom: "ios-marketing", size: "1024x1024", scale: "1x", pixels: 1024, filename: "icon-1024.png")
 ]
 
-func italicFont(size: CGFloat, weight: NSFont.Weight = .black) -> NSFont {
-    let base = NSFont.systemFont(ofSize: size, weight: weight)
+func racingCPath(in rect: NSRect) -> NSBezierPath {
+    func p(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+        NSPoint(
+            x: rect.minX + rect.width * x,
+            y: rect.minY + rect.height * y
+        )
+    }
+
+    let path = NSBezierPath()
+    path.move(to: p(0.76, 0.76))
+    path.line(to: p(0.70, 0.61))
+    path.line(to: p(0.52, 0.61))
+    path.curve(
+        to: p(0.43, 0.54),
+        controlPoint1: p(0.48, 0.61),
+        controlPoint2: p(0.45, 0.58)
+    )
+    path.line(to: p(0.34, 0.42))
+    path.curve(
+        to: p(0.37, 0.35),
+        controlPoint1: p(0.31, 0.38),
+        controlPoint2: p(0.32, 0.35)
+    )
+    path.line(to: p(0.64, 0.35))
+    path.line(to: p(0.59, 0.23))
+    path.line(to: p(0.34, 0.23))
+    path.curve(
+        to: p(0.20, 0.42),
+        controlPoint1: p(0.23, 0.23),
+        controlPoint2: p(0.16, 0.31)
+    )
+    path.line(to: p(0.36, 0.66))
+    path.curve(
+        to: p(0.57, 0.76),
+        controlPoint1: p(0.41, 0.73),
+        controlPoint2: p(0.48, 0.76)
+    )
+    path.close()
+    return path
+}
+
+func addSubtleBorder(_ canvas: NSRect) {
+    let borderRect = canvas.insetBy(dx: 42, dy: 42)
+    let border = NSBezierPath(
+        roundedRect: borderRect,
+        xRadius: 205,
+        yRadius: 205
+    )
+    border.lineWidth = 4
+    NSColor(calibratedWhite: 0.42, alpha: 0.62).setStroke()
+    border.stroke()
+}
+
+func italicWordmarkFont(size: CGFloat) -> NSFont {
+    if let font = NSFont(name: "AvenirNextCondensed-HeavyItalic", size: size) {
+        return font
+    }
+    let base = NSFont.systemFont(ofSize: size, weight: .black)
     return NSFontManager.shared.convert(base, toHaveTrait: .italicFontMask)
 }
 
-func drawTextCentered(
-    _ text: String,
-    in rect: NSRect,
-    font: NSFont,
-    foreground: NSColor,
-    shadow: NSShadow? = nil
-) {
-    var attributes: [NSAttributedString.Key: Any] = [
+func drawCenteredWordmark(_ text: String, canvas: NSRect) {
+    var fontSize: CGFloat = 320
+    var font = italicWordmarkFont(size: fontSize)
+    var attr: [NSAttributedString.Key: Any] = [
         .font: font,
-        .foregroundColor: foreground
+        .foregroundColor: NSColor.white
     ]
-    if let shadow {
-        attributes[.shadow] = shadow
+    var string = NSAttributedString(string: text, attributes: attr)
+
+    while string.size().width > canvas.width * 0.82 && fontSize > 180 {
+        fontSize -= 8
+        font = italicWordmarkFont(size: fontSize)
+        attr[.font] = font
+        string = NSAttributedString(string: text, attributes: attr)
     }
 
-    let string = NSAttributedString(string: text, attributes: attributes)
     let size = string.size()
-    let point = NSPoint(
-        x: rect.midX - size.width / 2,
-        y: rect.midY - size.height / 2 - font.descender
+    string.draw(
+        at: NSPoint(
+            x: canvas.midX - size.width / 2,
+            y: canvas.midY - size.height / 2 - font.descender * 0.55
+        )
     )
-    string.draw(at: point)
 }
 
 func makeMaster(kind: String) -> NSImage {
@@ -67,59 +122,45 @@ func makeMaster(kind: String) -> NSImage {
 
     let canvas = NSRect(x: 0, y: 0, width: 1024, height: 1024)
 
-    switch kind {
-    case "ClockChromeC":
-        let gradient = NSGradient(colors: [
-            NSColor(calibratedWhite: 0.12, alpha: 1),
-            NSColor(calibratedWhite: 0.02, alpha: 1)
+    if kind == "ClockChromeC" {
+        let bg = NSGradient(colors: [
+            NSColor(calibratedRed: 0.13, green: 0.15, blue: 0.17, alpha: 1),
+            NSColor(calibratedWhite: 0.01, alpha: 1)
         ])!
-        gradient.draw(in: canvas, angle: -55)
+        bg.draw(in: canvas, angle: -55)
 
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.75)
-        shadow.shadowBlurRadius = 28
-        shadow.shadowOffset = NSSize(width: 0, height: -16)
+        let logo = racingCPath(in: canvas)
+        let metal = NSGradient(colors: [
+            NSColor(calibratedWhite: 1.00, alpha: 1),
+            NSColor(calibratedWhite: 0.84, alpha: 1),
+            NSColor(calibratedWhite: 0.42, alpha: 1),
+            NSColor(calibratedWhite: 0.88, alpha: 1)
+        ])!
+        metal.draw(in: logo, angle: -90)
 
-        drawTextCentered(
-            "C",
-            in: canvas.offsetBy(dx: 14, dy: 2),
-            font: italicFont(size: 690),
-            foreground: NSColor(calibratedWhite: 0.82, alpha: 1),
-            shadow: shadow
-        )
-
-        let gloss = NSGradient(colors: [
-            NSColor.white.withAlphaComponent(0.32),
+        let highlight = NSGradient(colors: [
+            NSColor.white.withAlphaComponent(0.36),
             NSColor.white.withAlphaComponent(0.00)
         ])!
-        gloss.draw(
-            in: NSBezierPath(
-                roundedRect: NSRect(x: 0, y: 540, width: 1024, height: 484),
-                xRadius: 0,
-                yRadius: 0
-            ),
+        highlight.draw(
+            in: NSRect(x: 0, y: 650, width: 1024, height: 374),
             angle: -90
         )
 
-    case "ClockWordmark":
+        addSubtleBorder(canvas)
+    } else {
         NSColor.black.setFill()
         NSBezierPath(rect: canvas).fill()
-        drawTextCentered(
-            "Clock",
-            in: canvas.offsetBy(dx: 0, dy: 0),
-            font: italicFont(size: 300, weight: .bold),
-            foreground: .white
-        )
 
-    default:
-        NSColor.black.setFill()
-        NSBezierPath(rect: canvas).fill()
-        drawTextCentered(
-            "C",
-            in: canvas.offsetBy(dx: 12, dy: 2),
-            font: italicFont(size: 690),
-            foreground: .white
-        )
+        if kind == "ClockWordmark" {
+            drawCenteredWordmark("Clock", canvas: canvas)
+        } else {
+            let logo = racingCPath(in: canvas)
+            NSColor.white.setFill()
+            logo.fill()
+        }
+
+        addSubtleBorder(canvas)
     }
 
     image.unlockFocus()
@@ -171,13 +212,8 @@ func writeIconSet(named name: String, under assetsURL: URL) throws {
 
     for slot in slots {
         guard let data = pngData(master, pixels: slot.pixels) else {
-            throw NSError(
-                domain: "ClockIconGenerator",
-                code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "PNG generation failed"]
-            )
+            throw NSError(domain: "ClockIconGenerator", code: 1)
         }
-
         try data.write(
             to: setURL.appendingPathComponent(slot.filename),
             options: .atomic
@@ -205,7 +241,59 @@ func writeIconSet(named name: String, under assetsURL: URL) throws {
         withJSONObject: contents,
         options: [.prettyPrinted, .sortedKeys]
     )
+    try json.write(
+        to: setURL.appendingPathComponent("Contents.json"),
+        options: .atomic
+    )
+}
 
+func writePreviewSet(named name: String, under assetsURL: URL) throws {
+    let fm = FileManager.default
+    let previewName = "\(name)Preview"
+    let setURL = assetsURL.appendingPathComponent("\(previewName).imageset")
+
+    try? fm.removeItem(at: setURL)
+    try fm.createDirectory(
+        at: setURL,
+        withIntermediateDirectories: true
+    )
+
+    let master = makeMaster(kind: name)
+    let files = [
+        ("preview.png", 256, "1x"),
+        ("preview@2x.png", 512, "2x"),
+        ("preview@3x.png", 768, "3x")
+    ]
+
+    var images: [[String: String]] = []
+
+    for (filename, pixels, scale) in files {
+        guard let data = pngData(master, pixels: pixels) else {
+            throw NSError(domain: "ClockIconGenerator", code: 2)
+        }
+        try data.write(
+            to: setURL.appendingPathComponent(filename),
+            options: .atomic
+        )
+        images.append([
+            "idiom": "universal",
+            "scale": scale,
+            "filename": filename
+        ])
+    }
+
+    let contents: [String: Any] = [
+        "images": images,
+        "info": [
+            "author": "xcode",
+            "version": 1
+        ]
+    ]
+
+    let json = try JSONSerialization.data(
+        withJSONObject: contents,
+        options: [.prettyPrinted, .sortedKeys]
+    )
     try json.write(
         to: setURL.appendingPathComponent("Contents.json"),
         options: .atomic
@@ -225,5 +313,6 @@ try FileManager.default.createDirectory(
 
 for name in ["ClockItalicC", "ClockWordmark", "ClockChromeC"] {
     try writeIconSet(named: name, under: assetsURL)
+    try writePreviewSet(named: name, under: assetsURL)
     print("Generated \(name)")
 }
