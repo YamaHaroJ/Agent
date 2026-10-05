@@ -39,6 +39,8 @@ REMOTE_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-
 TOOLS_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/native-tools"
 ASSET_DIR="$SOURCE_DIR/Assets.xcassets"
 ICON_SCRIPT="$HOME/Library/Caches/ClockGenerateIcons.swift"
+ICON_MASTER_DIR="$HOME/Library/Caches/ClockIconMasters"
+ICON_MASTER_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-screen-clock/native-assets"
 
 mkdir -p "$HOME/Library/Logs"
 
@@ -71,10 +73,17 @@ if grep -q "raw.githack.com" "$SOURCE_DIR/ContentView.swift"; then
   exit 1
 fi
 
-echo "2/6 Generating the three built-in app icons..." | tee -a "$LOG"
-mkdir -p "$ASSET_DIR"
+echo "2/6 Installing the exact approved app icon artwork..." | tee -a "$LOG"
+mkdir -p "$ASSET_DIR" "$ICON_MASTER_DIR"
 curl -fsSL "$TOOLS_BASE/generate-icons.swift?v=$CACHE_BUST" -o "$ICON_SCRIPT"
-xcrun swift "$ICON_SCRIPT" "$ASSET_DIR" 2>&1 | tee -a "$LOG"
+
+for icon_name in ClockItalicC ClockWordmark ClockChromeC; do
+  curl -fsSL \
+    "$ICON_MASTER_BASE/${icon_name}_master.jpg?v=$CACHE_BUST" \
+    -o "$ICON_MASTER_DIR/${icon_name}_master.jpg"
+done
+
+xcrun swift "$ICON_SCRIPT" "$ASSET_DIR" "$ICON_MASTER_DIR" 2>&1 | tee -a "$LOG"
 
 for icon_set in ClockItalicC ClockWordmark ClockChromeC; do
   if [[ ! -f "$ASSET_DIR/$icon_set.appiconset/Contents.json" ]]; then
