@@ -651,73 +651,290 @@ final class FullScreenClockViewController:
             return
         }
 
-        let alert = UIAlertController(
-            title: "Edit Shift",
-            message: "Change the date, times, or notes.",
-            preferredStyle: .alert
+        let editor = UIViewController()
+        editor.view.backgroundColor = UIColor(
+            red: 0.075,
+            green: 0.08,
+            blue: 0.085,
+            alpha: 1
+        )
+        editor.preferredContentSize = CGSize(
+            width: 720,
+            height: 330
         )
 
-        alert.addTextField { field in
-            field.placeholder = "Date (10/5/2026)"
-            field.text = self.pastShiftDateFormatter.string(
-                from: record.start
-            )
-            field.keyboardType = .numbersAndPunctuation
-        }
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.text = "Edit Shift"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 28, weight: .bold)
 
-        alert.addTextField { field in
-            field.placeholder = "Clock in (9:00 AM)"
-            field.text = self.shiftTimeFormatter.string(
-                from: record.start
-            )
-            field.autocapitalizationType = .allCharacters
-        }
+        let subtitle = UILabel()
+        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        subtitle.text = "Change the date, times, or notes."
+        subtitle.textColor = UIColor.white.withAlphaComponent(0.55)
+        subtitle.font = .systemFont(ofSize: 15, weight: .medium)
 
-        alert.addTextField { field in
-            field.placeholder = "Clock out (5:00 PM)"
-            field.text = self.shiftTimeFormatter.string(
-                from: record.end
-            )
-            field.autocapitalizationType = .allCharacters
-        }
+        let dateField = makeShiftEditorField(
+            title: "Date",
+            text: pastShiftDateFormatter.string(from: record.start),
+            placeholder: "10/5/2026"
+        )
+        dateField.keyboardType = .numbersAndPunctuation
 
-        alert.addTextField { field in
-            field.placeholder = "What did you do?"
-            field.text = record.notes
-            field.autocapitalizationType = .sentences
-        }
-
-        alert.addAction(
-            UIAlertAction(
-                title: "Cancel",
-                style: .cancel
-            )
+        let startField = makeShiftEditorField(
+            title: "Clock In",
+            text: shiftTimeFormatter.string(from: record.start),
+            placeholder: "9:00 AM"
         )
 
-        alert.addAction(
-            UIAlertAction(
-                title: "Save Changes",
-                style: .default
-            ) { [weak self, weak alert] _ in
+        let endField = makeShiftEditorField(
+            title: "Clock Out",
+            text: shiftTimeFormatter.string(from: record.end),
+            placeholder: "5:00 PM"
+        )
+
+        let notesField = UITextView()
+        notesField.translatesAutoresizingMaskIntoConstraints = false
+        notesField.text = record.notes
+        notesField.textColor = .white
+        notesField.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        notesField.font = .systemFont(ofSize: 17, weight: .regular)
+        notesField.layer.cornerRadius = 12
+        notesField.textContainerInset = UIEdgeInsets(
+            top: 10,
+            left: 10,
+            bottom: 10,
+            right: 10
+        )
+
+        let notesLabel = UILabel()
+        notesLabel.translatesAutoresizingMaskIntoConstraints = false
+        notesLabel.text = "What I did"
+        notesLabel.textColor = UIColor.white.withAlphaComponent(0.62)
+        notesLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let cancelButton = UIButton(type: .system)
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        var cancelConfig = UIButton.Configuration.filled()
+        cancelConfig.title = "Cancel"
+        cancelConfig.baseForegroundColor = .white
+        cancelConfig.baseBackgroundColor =
+            UIColor.white.withAlphaComponent(0.12)
+        cancelConfig.cornerStyle = .large
+        cancelButton.configuration = cancelConfig
+
+        let saveButton = UIButton(type: .system)
+        saveButton.translatesAutoresizingMaskIntoConstraints = false
+        var saveConfig = UIButton.Configuration.filled()
+        saveConfig.title = "Save Changes"
+        saveConfig.baseForegroundColor = .black
+        saveConfig.baseBackgroundColor = .white
+        saveConfig.cornerStyle = .large
+        saveButton.configuration = saveConfig
+
+        let fieldsRow = UIStackView(
+            arrangedSubviews: [
+                dateField,
+                startField,
+                endField
+            ]
+        )
+        fieldsRow.translatesAutoresizingMaskIntoConstraints = false
+        fieldsRow.axis = .horizontal
+        fieldsRow.spacing = 10
+        fieldsRow.distribution = .fillEqually
+
+        let leftColumn = UIStackView(
+            arrangedSubviews: [
+                fieldsRow
+            ]
+        )
+        leftColumn.translatesAutoresizingMaskIntoConstraints = false
+        leftColumn.axis = .vertical
+        leftColumn.spacing = 10
+
+        let notesColumn = UIStackView(
+            arrangedSubviews: [
+                notesLabel,
+                notesField
+            ]
+        )
+        notesColumn.translatesAutoresizingMaskIntoConstraints = false
+        notesColumn.axis = .vertical
+        notesColumn.spacing = 7
+
+        let formRow = UIStackView(
+            arrangedSubviews: [
+                leftColumn,
+                notesColumn
+            ]
+        )
+        formRow.translatesAutoresizingMaskIntoConstraints = false
+        formRow.axis = .horizontal
+        formRow.spacing = 14
+        formRow.distribution = .fillEqually
+
+        let buttons = UIStackView(
+            arrangedSubviews: [
+                cancelButton,
+                saveButton
+            ]
+        )
+        buttons.translatesAutoresizingMaskIntoConstraints = false
+        buttons.axis = .horizontal
+        buttons.spacing = 10
+        buttons.distribution = .fillEqually
+
+        editor.view.addSubview(title)
+        editor.view.addSubview(subtitle)
+        editor.view.addSubview(formRow)
+        editor.view.addSubview(buttons)
+
+        NSLayoutConstraint.activate([
+            title.topAnchor.constraint(
+                equalTo: editor.view.topAnchor,
+                constant: 20
+            ),
+            title.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 22
+            ),
+            title.trailingAnchor.constraint(
+                lessThanOrEqualTo: editor.view.trailingAnchor,
+                constant: -22
+            ),
+
+            subtitle.topAnchor.constraint(
+                equalTo: title.bottomAnchor,
+                constant: 2
+            ),
+            subtitle.leadingAnchor.constraint(
+                equalTo: title.leadingAnchor
+            ),
+            subtitle.trailingAnchor.constraint(
+                lessThanOrEqualTo: editor.view.trailingAnchor,
+                constant: -22
+            ),
+
+            formRow.topAnchor.constraint(
+                equalTo: subtitle.bottomAnchor,
+                constant: 18
+            ),
+            formRow.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 22
+            ),
+            formRow.trailingAnchor.constraint(
+                equalTo: editor.view.trailingAnchor,
+                constant: -22
+            ),
+            formRow.heightAnchor.constraint(equalToConstant: 130),
+
+            notesField.heightAnchor.constraint(equalToConstant: 101),
+
+            buttons.topAnchor.constraint(
+                equalTo: formRow.bottomAnchor,
+                constant: 16
+            ),
+            buttons.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 22
+            ),
+            buttons.trailingAnchor.constraint(
+                equalTo: editor.view.trailingAnchor,
+                constant: -22
+            ),
+            buttons.heightAnchor.constraint(equalToConstant: 48)
+        ])
+
+        let nav = UINavigationController(
+            rootViewController: editor
+        )
+        nav.setNavigationBarHidden(true, animated: false)
+        nav.modalPresentationStyle = .formSheet
+        nav.preferredContentSize = CGSize(
+            width: 720,
+            height: 330
+        )
+
+        cancelButton.addAction(
+            UIAction { [weak nav] _ in
+                nav?.dismiss(animated: true)
+            },
+            for: .touchUpInside
+        )
+
+        saveButton.addAction(
+            UIAction { [weak self, weak nav, weak dateField, weak startField, weak endField, weak notesField] _ in
                 guard
                     let self,
-                    let fields = alert?.textFields,
-                    fields.count == 4
+                    let dateText = dateField?.text,
+                    let startText = startField?.text,
+                    let endText = endField?.text,
+                    let notes = notesField?.text
                 else {
                     return
                 }
 
-                self.updateShift(
-                    record,
-                    dateText: fields[0].text ?? "",
-                    startText: fields[1].text ?? "",
-                    endText: fields[2].text ?? "",
-                    notes: fields[3].text ?? ""
-                )
-            }
+                nav?.dismiss(animated: true) {
+                    self.updateShift(
+                        record,
+                        dateText: dateText,
+                        startText: startText,
+                        endText: endText,
+                        notes: notes
+                    )
+                }
+            },
+            for: .touchUpInside
         )
 
-        viewer.present(alert, animated: true)
+        viewer.present(nav, animated: true)
+    }
+
+    private func makeShiftEditorField(
+        title: String,
+        text: String,
+        placeholder: String
+    ) -> UITextField {
+        let field = UITextField()
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.text = text
+        field.placeholder = placeholder
+        field.textColor = .white
+        field.font = .systemFont(ofSize: 17, weight: .semibold)
+        field.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        field.layer.cornerRadius = 12
+        field.clearButtonMode = .whileEditing
+        field.autocapitalizationType = .allCharacters
+        field.heightAnchor.constraint(equalToConstant: 52).isActive = true
+
+        let label = UILabel()
+        label.text = title
+        label.textColor = UIColor.white.withAlphaComponent(0.55)
+        label.font = .systemFont(ofSize: 11, weight: .bold)
+        label.sizeToFit()
+
+        let container = UIView(
+            frame: CGRect(
+                x: 0,
+                y: 0,
+                width: 70,
+                height: 24
+            )
+        )
+        label.frame = CGRect(
+            x: 10,
+            y: 0,
+            width: 60,
+            height: 24
+        )
+        container.addSubview(label)
+        field.leftView = container
+        field.leftViewMode = .always
+
+        return field
     }
 
     private func updateShift(
