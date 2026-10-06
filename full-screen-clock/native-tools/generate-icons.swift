@@ -35,11 +35,11 @@ let slots: [Slot] = [
 func placement(for name: String) -> (scale: CGFloat, x: CGFloat, y: CGFloat) {
     switch name {
     case "ClockItalicC":
-        return (0.94, -0.020, 0.0)
+        return (1.06, 0.015, 0.0)
     case "ClockWordmark":
-        return (0.90, -0.050, 0.0)
+        return (1.06, 0.020, 0.0)
     case "ClockChromeC":
-        return (0.88, -0.080, 0.0)
+        return (1.06, -0.015, 0.0)
     default:
         return (1.0, 0.0, 0.0)
     }
