@@ -97,28 +97,23 @@ func renderPNG(
 
     context.interpolationQuality = .high
 
-    // Core Graphics has a bottom-left origin. The source is square, so this
-    // transform keeps the artwork upright while applying the exact optical
-    // placement used by the in-app preview.
+    // Draw the source in its native orientation. The previous CTM flip was
+    // rotating the alternate app icons relative to the correctly oriented
+    // in-app previews.
     let p = placement(for: name)
     let side = CGFloat(pixels) * p.scale
     let x = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.x
-    let yTop = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.y
-    let y = CGFloat(pixels) - yTop - side
+    let y = (CGFloat(pixels) - side) / 2 - CGFloat(pixels) * p.y
 
-    context.saveGState()
-    context.translateBy(x: 0, y: CGFloat(pixels))
-    context.scaleBy(x: 1, y: -1)
     context.draw(
         source,
         in: CGRect(
             x: x,
-            y: yTop,
+            y: y,
             width: side,
             height: side
         )
     )
-    context.restoreGState()
 
     // Do not install another silent all-black build.
     let bytes = buffer.bindMemory(
