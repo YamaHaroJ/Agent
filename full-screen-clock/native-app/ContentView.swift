@@ -164,7 +164,7 @@ final class FullScreenClockViewController:
                 equalTo: view.safeAreaLayoutGuide.topAnchor,
                 constant: 10
             ),
-            shiftPanel.widthAnchor.constraint(equalToConstant: 286),
+            shiftPanel.widthAnchor.constraint(equalToConstant: 300),
             shiftPanel.heightAnchor.constraint(equalToConstant: 52),
 
             row.leadingAnchor.constraint(
