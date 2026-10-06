@@ -1,5 +1,7 @@
-import AppKit
 import Foundation
+import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 struct Slot {
     let idiom: String
@@ -43,43 +45,146 @@ func placement(for name: String) -> (scale: CGFloat, x: CGFloat, y: CGFloat) {
     }
 }
 
-func pngData(from source: NSImage, name: String, pixels: Int) -> Data? {
-    let rep = NSBitmapImageRep(
-        bitmapDataPlanes: nil,
-        pixelsWide: pixels,
-        pixelsHigh: pixels,
-        bitsPerSample: 8,
-        samplesPerPixel: 3,
-        hasAlpha: false,
-        isPlanar: false,
-        colorSpaceName: .deviceRGB,
-        bytesPerRow: 0,
-        bitsPerPixel: 24
-    )!
+func loadCGImage(_ url: URL) -> CGImage? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+        return nil
+    }
+    return CGImageSourceCreateImageAtIndex(source, 0, nil)
+}
 
-    rep.size = NSSize(width: pixels, height: pixels)
+func renderPNG(
+    source: CGImage,
+    name: String,
+    pixels: Int
+) throws -> Data {
+    let width = pixels
+    let height = pixels
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    let byteCount = bytesPerRow * height
 
-    NSGraphicsContext.saveGraphicsState()
-    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-    NSGraphicsContext.current?.imageInterpolation = .high
+    let buffer = UnsafeMutableRawPointer.allocate(
+        byteCount: byteCount,
+        alignment: 64
+    )
+    defer { buffer.deallocate() }
 
-    NSColor.black.setFill()
-    NSBezierPath(rect: NSRect(x: 0, y: 0, width: pixels, height: pixels)).fill()
+    memset(buffer, 0, byteCount)
 
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let bitmapInfo =
+        CGImageAlphaInfo.noneSkipLast.rawValue |
+        CGBitmapInfo.byteOrder32Big.rawValue
+
+    guard let context = CGContext(
+        data: buffer,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: colorSpace,
+        bitmapInfo: bitmapInfo
+    ) else {
+        throw NSError(
+            domain: "ClockIconGenerator",
+            code: 10,
+            userInfo: [NSLocalizedDescriptionKey: "Could not create bitmap context"]
+        )
+    }
+
+    context.setFillColor(CGColor(gray: 0, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+
+    context.interpolationQuality = .high
+
+    // Core Graphics has a bottom-left origin. The source is square, so this
+    // transform keeps the artwork upright while applying the exact optical
+    // placement used by the in-app preview.
     let p = placement(for: name)
     let side = CGFloat(pixels) * p.scale
     let x = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.x
-    let y = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.y
+    let yTop = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.y
+    let y = CGFloat(pixels) - yTop - side
 
-    source.draw(
-        in: NSRect(x: x, y: y, width: side, height: side),
-        from: NSRect(origin: .zero, size: source.size),
-        operation: .sourceOver,
-        fraction: 1
+    context.saveGState()
+    context.translateBy(x: 0, y: CGFloat(pixels))
+    context.scaleBy(x: 1, y: -1)
+    context.draw(
+        source,
+        in: CGRect(
+            x: x,
+            y: yTop,
+            width: side,
+            height: side
+        )
     )
+    context.restoreGState()
 
-    NSGraphicsContext.restoreGraphicsState()
-    return rep.representation(using: .png, properties: [:])
+    // Do not install another silent all-black build.
+    let bytes = buffer.bindMemory(
+        to: UInt8.self,
+        capacity: byteCount
+    )
+    var brightPixels = 0
+    let step = max(1, pixels / 64)
+
+    for yy in stride(from: 0, to: height, by: step) {
+        for xx in stride(from: 0, to: width, by: step) {
+            let i = yy * bytesPerRow + xx * bytesPerPixel
+            let r = Int(bytes[i])
+            let g = Int(bytes[i + 1])
+            let b = Int(bytes[i + 2])
+            if max(r, max(g, b)) > 38 {
+                brightPixels += 1
+            }
+        }
+    }
+
+    if brightPixels < 20 {
+        throw NSError(
+            domain: "ClockIconGenerator",
+            code: 11,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Generated \(name) is effectively black; refusing to continue."
+            ]
+        )
+    }
+
+    guard let outputImage = context.makeImage() else {
+        throw NSError(
+            domain: "ClockIconGenerator",
+            code: 12,
+            userInfo: [NSLocalizedDescriptionKey: "Could not create output image"]
+        )
+    }
+
+    let mutable = NSMutableData()
+
+    guard let destination = CGImageDestinationCreateWithData(
+        mutable,
+        UTType.png.identifier as CFString,
+        1,
+        nil
+    ) else {
+        throw NSError(
+            domain: "ClockIconGenerator",
+            code: 13,
+            userInfo: [NSLocalizedDescriptionKey: "Could not create PNG destination"]
+        )
+    }
+
+    CGImageDestinationAddImage(destination, outputImage, nil)
+
+    guard CGImageDestinationFinalize(destination) else {
+        throw NSError(
+            domain: "ClockIconGenerator",
+            code: 14,
+            userInfo: [NSLocalizedDescriptionKey: "Could not encode PNG"]
+        )
+    }
+
+    return mutable as Data
 }
 
 func writeJSON(_ object: Any, to url: URL) throws {
@@ -90,7 +195,7 @@ func writeJSON(_ object: Any, to url: URL) throws {
     try data.write(to: url, options: .atomic)
 }
 
-func writeIconSet(name: String, source: NSImage, assetsURL: URL) throws {
+func writeIconSet(name: String, source: CGImage, assetsURL: URL) throws {
     let fm = FileManager.default
     let setURL = assetsURL.appendingPathComponent("\(name).appiconset")
 
@@ -100,9 +205,11 @@ func writeIconSet(name: String, source: NSImage, assetsURL: URL) throws {
     var images: [[String: String]] = []
 
     for slot in slots {
-        guard let data = pngData(from: source, name: name, pixels: slot.pixels) else {
-            throw NSError(domain: "ClockIconGenerator", code: 1)
-        }
+        let data = try renderPNG(
+            source: source,
+            name: name,
+            pixels: slot.pixels
+        )
 
         try data.write(
             to: setURL.appendingPathComponent(slot.filename),
@@ -126,7 +233,7 @@ func writeIconSet(name: String, source: NSImage, assetsURL: URL) throws {
     )
 }
 
-func writePreviewSet(name: String, source: NSImage, assetsURL: URL) throws {
+func writePreviewSet(name: String, source: CGImage, assetsURL: URL) throws {
     let fm = FileManager.default
     let setURL = assetsURL.appendingPathComponent("\(name)Preview.imageset")
 
@@ -142,9 +249,11 @@ func writePreviewSet(name: String, source: NSImage, assetsURL: URL) throws {
     var images: [[String: String]] = []
 
     for (filename, pixels, scale) in previewSlots {
-        guard let data = pngData(from: source, name: name, pixels: pixels) else {
-            throw NSError(domain: "ClockIconGenerator", code: 2)
-        }
+        let data = try renderPNG(
+            source: source,
+            name: name,
+            pixels: pixels
+        )
 
         try data.write(
             to: setURL.appendingPathComponent(filename),
@@ -188,12 +297,24 @@ let names = ["ClockItalicC", "ClockWordmark", "ClockChromeC"]
 for name in names {
     let masterURL = mastersURL.appendingPathComponent("\(name)_master.jpg")
 
-    guard let source = NSImage(contentsOf: masterURL) else {
-        fputs("Could not load exact master artwork: \(masterURL.path)\n", stderr)
+    guard let source = loadCGImage(masterURL) else {
+        fputs(
+            "Could not load master artwork: \(masterURL.path)\n",
+            stderr
+        )
         exit(3)
     }
 
-    try writeIconSet(name: name, source: source, assetsURL: assetsURL)
-    try writePreviewSet(name: name, source: source, assetsURL: assetsURL)
-    print("Generated exact \(name)")
+    try writeIconSet(
+        name: name,
+        source: source,
+        assetsURL: assetsURL
+    )
+    try writePreviewSet(
+        name: name,
+        source: source,
+        assetsURL: assetsURL
+    )
+
+    print("Generated and validated \(name)")
 }
