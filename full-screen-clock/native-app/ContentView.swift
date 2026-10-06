@@ -44,6 +44,20 @@ final class FullScreenClockViewController:
 
     private var settingsButton: UIButton!
 
+    // SHIFT_TIMER
+    private var shiftPanel: UIVisualEffectView!
+    private var shiftTimerLabel: UILabel!
+    private var clockInButton: UIButton!
+    private var clockOutButton: UIButton!
+    private var saveShiftButton: UIButton!
+    private var shiftLogButton: UIButton!
+    private var shiftTimer: Timer?
+
+    private var shiftStartDate: Date?
+    private var activeSegmentStart: Date?
+    private var accumulatedShiftSeconds: TimeInterval = 0
+    private var lastClockOutDate: Date?
+
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
 
@@ -61,10 +75,619 @@ final class FullScreenClockViewController:
         setupMediaRemote()
         setupMediaControls()
         setupSettingsButton()
+        setupShiftControls()
+        restoreShiftState()
         loadSavedBackground()
 
         UIApplication.shared.isIdleTimerDisabled = true
         loadClock()
+    }
+
+    // MARK: - Shift timer
+
+    private enum ShiftDefaultsKey {
+        static let start = "clock.shift.start"
+        static let activeStart = "clock.shift.activeStart"
+        static let accumulated = "clock.shift.accumulated"
+        static let lastClockOut = "clock.shift.lastClockOut"
+    }
+
+    private func setupShiftControls() {
+        shiftPanel = UIVisualEffectView(
+            effect: UIBlurEffect(style: .systemThinMaterialDark)
+        )
+        shiftPanel.translatesAutoresizingMaskIntoConstraints = false
+        shiftPanel.layer.cornerRadius = 18
+        shiftPanel.clipsToBounds = true
+        shiftPanel.layer.borderWidth = 1
+        shiftPanel.layer.borderColor =
+            UIColor.white.withAlphaComponent(0.16).cgColor
+
+        shiftTimerLabel = UILabel()
+        shiftTimerLabel.translatesAutoresizingMaskIntoConstraints = false
+        shiftTimerLabel.text = "00:00:00"
+        shiftTimerLabel.textColor = .white
+        shiftTimerLabel.font = .monospacedDigitSystemFont(
+            ofSize: 14,
+            weight: .semibold
+        )
+        shiftTimerLabel.textAlignment = .center
+
+        clockInButton = makeShiftButton(
+            title: "IN",
+            symbol: "play.fill",
+            action: #selector(clockIn)
+        )
+        clockOutButton = makeShiftButton(
+            title: "OUT",
+            symbol: "pause.fill",
+            action: #selector(clockOut)
+        )
+        saveShiftButton = makeShiftButton(
+            title: nil,
+            symbol: "square.and.arrow.down",
+            action: #selector(promptToSaveShift)
+        )
+        saveShiftButton.accessibilityLabel = "Save Shift"
+
+        shiftLogButton = makeShiftButton(
+            title: nil,
+            symbol: "doc.text",
+            action: #selector(openShiftLog)
+        )
+        shiftLogButton.accessibilityLabel = "Open Shift Log"
+
+        let row = UIStackView(
+            arrangedSubviews: [
+                shiftTimerLabel,
+                clockInButton,
+                clockOutButton,
+                saveShiftButton,
+                shiftLogButton
+            ]
+        )
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.axis = .horizontal
+        row.alignment = .center
+        row.spacing = 6
+        row.distribution = .fill
+
+        shiftPanel.contentView.addSubview(row)
+        view.addSubview(shiftPanel)
+
+        NSLayoutConstraint.activate([
+            shiftPanel.leadingAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.leadingAnchor,
+                constant: 14
+            ),
+            shiftPanel.topAnchor.constraint(
+                equalTo: view.safeAreaLayoutGuide.topAnchor,
+                constant: 10
+            ),
+            shiftPanel.widthAnchor.constraint(equalToConstant: 286),
+            shiftPanel.heightAnchor.constraint(equalToConstant: 52),
+
+            row.leadingAnchor.constraint(
+                equalTo: shiftPanel.contentView.leadingAnchor,
+                constant: 10
+            ),
+            row.trailingAnchor.constraint(
+                equalTo: shiftPanel.contentView.trailingAnchor,
+                constant: -10
+            ),
+            row.centerYAnchor.constraint(
+                equalTo: shiftPanel.contentView.centerYAnchor
+            ),
+
+            shiftTimerLabel.widthAnchor.constraint(equalToConstant: 78),
+            clockInButton.widthAnchor.constraint(equalToConstant: 46),
+            clockOutButton.widthAnchor.constraint(equalToConstant: 52),
+            saveShiftButton.widthAnchor.constraint(equalToConstant: 36),
+            shiftLogButton.widthAnchor.constraint(equalToConstant: 36),
+
+            clockInButton.heightAnchor.constraint(equalToConstant: 36),
+            clockOutButton.heightAnchor.constraint(equalToConstant: 36),
+            saveShiftButton.heightAnchor.constraint(equalToConstant: 36),
+            shiftLogButton.heightAnchor.constraint(equalToConstant: 36)
+        ])
+
+        shiftTimer = Timer.scheduledTimer(
+            withTimeInterval: 0.5,
+            repeats: true
+        ) { [weak self] _ in
+            self?.refreshShiftUI()
+        }
+    }
+
+    private func makeShiftButton(
+        title: String?,
+        symbol: String,
+        action: Selector
+    ) -> UIButton {
+        let button = UIButton(type: .system)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.tintColor = .white
+        button.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        button.layer.cornerRadius = 11
+
+        var configuration = UIButton.Configuration.plain()
+        configuration.image = UIImage(
+            systemName: symbol,
+            withConfiguration: UIImage.SymbolConfiguration(
+                pointSize: 13,
+                weight: .semibold
+            )
+        )
+        configuration.imagePadding = 4
+        configuration.baseForegroundColor = .white
+        configuration.contentInsets = NSDirectionalEdgeInsets(
+            top: 4,
+            leading: 5,
+            bottom: 4,
+            trailing: 5
+        )
+
+        if let title {
+            configuration.title = title
+            configuration.titleTextAttributesTransformer =
+                UIConfigurationTextAttributesTransformer { incoming in
+                    var outgoing = incoming
+                    outgoing.font = .systemFont(
+                        ofSize: 10,
+                        weight: .bold
+                    )
+                    return outgoing
+                }
+        }
+
+        button.configuration = configuration
+        button.addTarget(
+            self,
+            action: action,
+            for: .touchUpInside
+        )
+
+        return button
+    }
+
+    @objc private func clockIn() {
+        guard activeSegmentStart == nil else {
+            return
+        }
+
+        let now = Date()
+
+        if shiftStartDate == nil {
+            shiftStartDate = now
+            accumulatedShiftSeconds = 0
+            lastClockOutDate = nil
+        }
+
+        activeSegmentStart = now
+        persistShiftState()
+        refreshShiftUI()
+    }
+
+    @objc private func clockOut() {
+        guard let activeSegmentStart else {
+            return
+        }
+
+        let now = Date()
+        accumulatedShiftSeconds +=
+            now.timeIntervalSince(activeSegmentStart)
+
+        self.activeSegmentStart = nil
+        lastClockOutDate = now
+
+        persistShiftState()
+        refreshShiftUI()
+    }
+
+    @objc private func promptToSaveShift() {
+        guard shiftStartDate != nil else {
+            showShiftAlert(
+                title: "No Shift",
+                message: "Clock in before saving a shift."
+            )
+            return
+        }
+
+        if activeSegmentStart != nil {
+            clockOut()
+        }
+
+        let alert = UIAlertController(
+            title: "Save Shift",
+            message: "What did you do during this shift?",
+            preferredStyle: .alert
+        )
+
+        alert.addTextField { field in
+            field.placeholder = "Example: calls, applications, follow-ups..."
+            field.autocapitalizationType = .sentences
+            field.clearButtonMode = .whileEditing
+        }
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Save",
+                style: .default
+            ) { [weak self, weak alert] _ in
+                guard let self else {
+                    return
+                }
+
+                let notes =
+                    alert?.textFields?.first?.text?
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    ?? ""
+
+                self.saveCurrentShift(notes: notes)
+            }
+        )
+
+        present(alert, animated: true)
+    }
+
+    private func saveCurrentShift(notes: String) {
+        guard let start = shiftStartDate else {
+            return
+        }
+
+        let end = lastClockOutDate ?? Date()
+        let seconds = max(0, accumulatedShiftSeconds)
+
+        do {
+            try ensureShiftLogExists()
+
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateStyle = .medium
+            dateFormatter.timeStyle = .none
+
+            let timeFormatter = DateFormatter()
+            timeFormatter.dateStyle = .none
+            timeFormatter.timeStyle = .short
+
+            let entry = """
+
+            (dateFormatter.string(from: start))
+            Clock In:  (timeFormatter.string(from: start))
+            Clock Out: (timeFormatter.string(from: end))
+            Total:     (formattedShiftDuration(seconds))
+            What I did: (notes.isEmpty ? "(no notes)" : notes)
+            --------------------------------------------------
+
+            """
+
+            let handle = try FileHandle(
+                forWritingTo: shiftLogURL
+            )
+            try handle.seekToEnd()
+
+            if let data = entry.data(using: .utf8) {
+                try handle.write(contentsOf: data)
+            }
+
+            try handle.close()
+
+            resetShiftState()
+        } catch {
+            showShiftAlert(
+                title: "Couldn't Save Shift",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    @objc private func openShiftLog() {
+        do {
+            try ensureShiftLogExists()
+
+            let contents = try String(
+                contentsOf: shiftLogURL,
+                encoding: .utf8
+            )
+
+            let viewer = UIViewController()
+            viewer.view.backgroundColor = .systemBackground
+            viewer.title = "Shift Log"
+
+            let textView = UITextView()
+            textView.translatesAutoresizingMaskIntoConstraints = false
+            textView.isEditable = false
+            textView.alwaysBounceVertical = true
+            textView.backgroundColor = .systemBackground
+            textView.textColor = .label
+            textView.font = .monospacedSystemFont(
+                ofSize: 15,
+                weight: .regular
+            )
+            textView.text = contents
+            textView.textContainerInset = UIEdgeInsets(
+                top: 18,
+                left: 16,
+                bottom: 30,
+                right: 16
+            )
+
+            viewer.view.addSubview(textView)
+
+            NSLayoutConstraint.activate([
+                textView.leadingAnchor.constraint(
+                    equalTo: viewer.view.leadingAnchor
+                ),
+                textView.trailingAnchor.constraint(
+                    equalTo: viewer.view.trailingAnchor
+                ),
+                textView.topAnchor.constraint(
+                    equalTo: viewer.view.topAnchor
+                ),
+                textView.bottomAnchor.constraint(
+                    equalTo: viewer.view.bottomAnchor
+                )
+            ])
+
+            let nav = UINavigationController(
+                rootViewController: viewer
+            )
+            nav.modalPresentationStyle = .formSheet
+
+            viewer.navigationItem.leftBarButtonItem =
+                UIBarButtonItem(
+                    systemItem: .close,
+                    primaryAction: UIAction { [weak nav] _ in
+                        nav?.dismiss(animated: true)
+                    }
+                )
+
+            viewer.navigationItem.rightBarButtonItem =
+                UIBarButtonItem(
+                    systemItem: .action,
+                    primaryAction: UIAction { [weak self, weak viewer] _ in
+                        guard
+                            let self,
+                            let viewer
+                        else {
+                            return
+                        }
+
+                        self.shareShiftLog(from: viewer)
+                    }
+                )
+
+            present(nav, animated: true)
+        } catch {
+            showShiftAlert(
+                title: "Couldn't Open Shift Log",
+                message: error.localizedDescription
+            )
+        }
+    }
+
+    private func shareShiftLog(from source: UIViewController) {
+        let sheet = UIActivityViewController(
+            activityItems: [shiftLogURL],
+            applicationActivities: nil
+        )
+
+        if let popover = sheet.popoverPresentationController {
+            popover.sourceView = source.view
+            popover.sourceRect = CGRect(
+                x: source.view.bounds.midX,
+                y: source.view.bounds.midY,
+                width: 1,
+                height: 1
+            )
+        }
+
+        source.present(sheet, animated: true)
+    }
+
+    private var shiftLogURL: URL {
+        let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first!
+
+        return documents.appendingPathComponent("Shift Log.txt")
+    }
+
+    private func ensureShiftLogExists() throws {
+        let url = shiftLogURL
+
+        if !FileManager.default.fileExists(
+            atPath: url.path
+        ) {
+            let header = """
+            SHIFT LOG
+            =========
+
+            """
+            try header.write(
+                to: url,
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+    }
+
+    private func restoreShiftState() {
+        let defaults = UserDefaults.standard
+
+        if let value = defaults.object(
+            forKey: ShiftDefaultsKey.start
+        ) as? Double {
+            shiftStartDate = Date(
+                timeIntervalSince1970: value
+            )
+        }
+
+        if let value = defaults.object(
+            forKey: ShiftDefaultsKey.activeStart
+        ) as? Double {
+            activeSegmentStart = Date(
+                timeIntervalSince1970: value
+            )
+        }
+
+        accumulatedShiftSeconds = defaults.double(
+            forKey: ShiftDefaultsKey.accumulated
+        )
+
+        if let value = defaults.object(
+            forKey: ShiftDefaultsKey.lastClockOut
+        ) as? Double {
+            lastClockOutDate = Date(
+                timeIntervalSince1970: value
+            )
+        }
+
+        refreshShiftUI()
+    }
+
+    private func persistShiftState() {
+        let defaults = UserDefaults.standard
+
+        if let shiftStartDate {
+            defaults.set(
+                shiftStartDate.timeIntervalSince1970,
+                forKey: ShiftDefaultsKey.start
+            )
+        } else {
+            defaults.removeObject(
+                forKey: ShiftDefaultsKey.start
+            )
+        }
+
+        if let activeSegmentStart {
+            defaults.set(
+                activeSegmentStart.timeIntervalSince1970,
+                forKey: ShiftDefaultsKey.activeStart
+            )
+        } else {
+            defaults.removeObject(
+                forKey: ShiftDefaultsKey.activeStart
+            )
+        }
+
+        defaults.set(
+            accumulatedShiftSeconds,
+            forKey: ShiftDefaultsKey.accumulated
+        )
+
+        if let lastClockOutDate {
+            defaults.set(
+                lastClockOutDate.timeIntervalSince1970,
+                forKey: ShiftDefaultsKey.lastClockOut
+            )
+        } else {
+            defaults.removeObject(
+                forKey: ShiftDefaultsKey.lastClockOut
+            )
+        }
+    }
+
+    private func resetShiftState() {
+        shiftStartDate = nil
+        activeSegmentStart = nil
+        accumulatedShiftSeconds = 0
+        lastClockOutDate = nil
+
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: ShiftDefaultsKey.start)
+        defaults.removeObject(forKey: ShiftDefaultsKey.activeStart)
+        defaults.removeObject(forKey: ShiftDefaultsKey.accumulated)
+        defaults.removeObject(forKey: ShiftDefaultsKey.lastClockOut)
+
+        refreshShiftUI()
+    }
+
+    private func currentShiftSeconds() -> TimeInterval {
+        var seconds = accumulatedShiftSeconds
+
+        if let activeSegmentStart {
+            seconds += Date().timeIntervalSince(activeSegmentStart)
+        }
+
+        return max(0, seconds)
+    }
+
+    private func refreshShiftUI() {
+        guard shiftTimerLabel != nil else {
+            return
+        }
+
+        shiftTimerLabel.text =
+            formattedTimer(currentShiftSeconds())
+
+        let running = activeSegmentStart != nil
+        let hasShift = shiftStartDate != nil
+
+        clockInButton.isEnabled = !running
+        clockOutButton.isEnabled = running
+        saveShiftButton.isEnabled = hasShift
+
+        clockInButton.alpha = running ? 0.35 : 1
+        clockOutButton.alpha = running ? 1 : 0.35
+        saveShiftButton.alpha = hasShift ? 1 : 0.35
+    }
+
+    private func formattedTimer(
+        _ seconds: TimeInterval
+    ) -> String {
+        let total = Int(seconds.rounded(.down))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+
+        return String(
+            format: "%02d:%02d:%02d",
+            hours,
+            minutes,
+            secs
+        )
+    }
+
+    private func formattedShiftDuration(
+        _ seconds: TimeInterval
+    ) -> String {
+        let total = Int(seconds.rounded())
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+
+        if hours > 0 {
+            return "(hours)h (minutes)m"
+        }
+
+        return "(minutes)m"
+    }
+
+    private func showShiftAlert(
+        title: String,
+        message: String
+    ) {
+        let alert = UIAlertController(
+            title: title,
+            message: message,
+            preferredStyle: .alert
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "OK",
+                style: .default
+            )
+        )
+
+        present(alert, animated: true)
     }
 
     // MARK: - Background photo
@@ -1000,6 +1623,7 @@ final class FullScreenClockViewController:
     }
 
     deinit {
+        shiftTimer?.invalidate()
         UIApplication.shared.isIdleTimerDisabled = false
 
         if let mediaRemoteHandle {
