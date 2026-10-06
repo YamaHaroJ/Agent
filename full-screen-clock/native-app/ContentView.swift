@@ -780,34 +780,11 @@ final class FullScreenClockViewController:
     private func breakSecondsAcrossDay(
         _ records: [ShiftRecord]
     ) -> TimeInterval {
-        let calendar = Calendar.current
-        let grouped = Dictionary(grouping: records) {
-            calendar.startOfDay(for: $0.start)
-        }
-
-        var total: TimeInterval = 0
-
-        for dayRecords in grouped.values {
-            let sorted = dayRecords.sorted {
-                $0.start < $1.start
-            }
-
-            total += sorted.reduce(0) {
-                $0 + breakSeconds(for: $1)
-            }
-
-            if sorted.count > 1 {
-                for index in 1..<sorted.count {
-                    let previous = sorted[index - 1]
-                    let current = sorted[index]
-
-                    if current.start > previous.end {
-                        total += current.start.timeIntervalSince(
-                            previous.end
-                        )
-                    }
-                }
-            }
+        // Only count break time that happened INSIDE a saved shift.
+        // Gaps between separately saved shifts are off-the-clock time,
+        // not break time.
+        let total = records.reduce(0.0) {
+            $0 + breakSeconds(for: $1)
         }
 
         return max(0, total)
