@@ -525,11 +525,11 @@ final class FullScreenClockViewController:
 
         switch iconName {
         case "ClockItalicC":
-            placement = (1.06, 0.015, 0.0)
+            placement = (1.06, -0.045, 0.0)
         case "ClockWordmark":
-            placement = (1.06, 0.020, 0.0)
+            placement = (1.06, -0.047, 0.0)
         case "ClockChromeC":
-            placement = (1.06, -0.015, 0.0)
+            placement = (1.06, -0.050, 0.0)
         default:
             placement = (1.0, 0.0, 0.0)
         }
