@@ -505,11 +505,55 @@ final class FullScreenClockViewController:
 
             DispatchQueue.main.async {
                 button.setImage(
-                    image.withRenderingMode(.alwaysOriginal),
+                    self.opticallyCenteredPreview(
+                        image,
+                        named: iconName,
+                        size: 132
+                    ).withRenderingMode(.alwaysOriginal),
                     for: .normal
                 )
             }
         }.resume()
+    }
+
+    private func opticallyCenteredPreview(
+        _ image: UIImage,
+        named iconName: String,
+        size: CGFloat
+    ) -> UIImage {
+        let placement: (scale: CGFloat, x: CGFloat, y: CGFloat)
+
+        switch iconName {
+        case "ClockItalicC":
+            placement = (0.94, -0.020, 0.0)
+        case "ClockWordmark":
+            placement = (0.90, -0.050, 0.0)
+        case "ClockChromeC":
+            placement = (0.88, -0.080, 0.0)
+        default:
+            placement = (1.0, 0.0, 0.0)
+        }
+
+        let renderer = UIGraphicsImageRenderer(
+            size: CGSize(width: size, height: size)
+        )
+
+        return renderer.image { context in
+            UIColor.black.setFill()
+            context.fill(
+                CGRect(x: 0, y: 0, width: size, height: size)
+            )
+
+            let side = size * placement.scale
+            let rect = CGRect(
+                x: (size - side) / 2 + size * placement.x,
+                y: (size - side) / 2 + size * placement.y,
+                width: side,
+                height: side
+            )
+
+            image.draw(in: rect)
+        }
     }
 
     private func setAppIcon(_ iconName: String?) {
