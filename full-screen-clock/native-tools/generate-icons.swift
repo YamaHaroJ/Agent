@@ -30,7 +30,20 @@ let slots: [Slot] = [
     .init(idiom: "ios-marketing", size: "1024x1024", scale: "1x", pixels: 1024, filename: "icon-1024.png")
 ]
 
-func pngData(from source: NSImage, pixels: Int) -> Data? {
+func placement(for name: String) -> (scale: CGFloat, x: CGFloat, y: CGFloat) {
+    switch name {
+    case "ClockItalicC":
+        return (0.94, -0.020, 0.0)
+    case "ClockWordmark":
+        return (0.90, -0.050, 0.0)
+    case "ClockChromeC":
+        return (0.88, -0.080, 0.0)
+    default:
+        return (1.0, 0.0, 0.0)
+    }
+}
+
+func pngData(from source: NSImage, name: String, pixels: Int) -> Data? {
     let rep = NSBitmapImageRep(
         bitmapDataPlanes: nil,
         pixelsWide: pixels,
@@ -53,10 +66,15 @@ func pngData(from source: NSImage, pixels: Int) -> Data? {
     NSColor.black.setFill()
     NSBezierPath(rect: NSRect(x: 0, y: 0, width: pixels, height: pixels)).fill()
 
+    let p = placement(for: name)
+    let side = CGFloat(pixels) * p.scale
+    let x = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.x
+    let y = (CGFloat(pixels) - side) / 2 + CGFloat(pixels) * p.y
+
     source.draw(
-        in: NSRect(x: 0, y: 0, width: pixels, height: pixels),
+        in: NSRect(x: x, y: y, width: side, height: side),
         from: NSRect(origin: .zero, size: source.size),
-        operation: .copy,
+        operation: .sourceOver,
         fraction: 1
     )
 
@@ -82,7 +100,7 @@ func writeIconSet(name: String, source: NSImage, assetsURL: URL) throws {
     var images: [[String: String]] = []
 
     for slot in slots {
-        guard let data = pngData(from: source, pixels: slot.pixels) else {
+        guard let data = pngData(from: source, name: name, pixels: slot.pixels) else {
             throw NSError(domain: "ClockIconGenerator", code: 1)
         }
 
@@ -124,7 +142,7 @@ func writePreviewSet(name: String, source: NSImage, assetsURL: URL) throws {
     var images: [[String: String]] = []
 
     for (filename, pixels, scale) in previewSlots {
-        guard let data = pngData(from: source, pixels: pixels) else {
+        guard let data = pngData(from: source, name: name, pixels: pixels) else {
             throw NSError(domain: "ClockIconGenerator", code: 2)
         }
 
