@@ -37,11 +37,11 @@ func placement(for name: String) -> (scale: CGFloat, x: CGFloat, y: CGFloat) {
     case "ClockItalicC":
         return (1.06, -0.045, 0.0)
     case "ClockWordmark":
-        // Measured from the iPad preview: artwork center was 12.5 px right.
-        return (1.06, -0.173, 0.0)
+        // Pixel-measured from the 2048px iPad screenshot.
+        return (1.06, -0.108, 0.0)
     case "ClockChromeC":
-        // Measured from the iPad preview: artwork center was 7 px right.
-        return (1.06, -0.154, 0.0)
+        // Pixel-measured from the 2048px iPad screenshot.
+        return (1.06, -0.103, 0.0)
     default:
         return (1.0, 0.0, 0.0)
     }
