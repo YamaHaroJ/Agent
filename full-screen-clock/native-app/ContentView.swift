@@ -659,60 +659,82 @@ final class FullScreenClockViewController:
             alpha: 1
         )
         editor.preferredContentSize = CGSize(
-            width: 720,
-            height: 330
+            width: 920,
+            height: 430
         )
 
         let title = UILabel()
         title.translatesAutoresizingMaskIntoConstraints = false
         title.text = "Edit Shift"
         title.textColor = .white
-        title.font = .systemFont(ofSize: 28, weight: .bold)
+        title.font = .systemFont(ofSize: 30, weight: .bold)
 
         let subtitle = UILabel()
         subtitle.translatesAutoresizingMaskIntoConstraints = false
         subtitle.text = "Change the date, times, or notes."
         subtitle.textColor = UIColor.white.withAlphaComponent(0.55)
-        subtitle.font = .systemFont(ofSize: 15, weight: .medium)
+        subtitle.font = .systemFont(ofSize: 16, weight: .medium)
 
         let dateField = makeShiftEditorField(
-            title: "Date",
             text: pastShiftDateFormatter.string(from: record.start),
             placeholder: "10/5/2026"
         )
         dateField.keyboardType = .numbersAndPunctuation
 
         let startField = makeShiftEditorField(
-            title: "Clock In",
             text: shiftTimeFormatter.string(from: record.start),
             placeholder: "9:00 AM"
         )
 
         let endField = makeShiftEditorField(
-            title: "Clock Out",
             text: shiftTimeFormatter.string(from: record.end),
             placeholder: "5:00 PM"
         )
+
+        let dateColumn = makeShiftEditorColumn(
+            title: "Date",
+            field: dateField
+        )
+        let startColumn = makeShiftEditorColumn(
+            title: "Clock In",
+            field: startField
+        )
+        let endColumn = makeShiftEditorColumn(
+            title: "Clock Out",
+            field: endField
+        )
+
+        let fieldsRow = UIStackView(
+            arrangedSubviews: [
+                dateColumn,
+                startColumn,
+                endColumn
+            ]
+        )
+        fieldsRow.translatesAutoresizingMaskIntoConstraints = false
+        fieldsRow.axis = .horizontal
+        fieldsRow.spacing = 16
+        fieldsRow.distribution = .fillEqually
+
+        let notesLabel = UILabel()
+        notesLabel.translatesAutoresizingMaskIntoConstraints = false
+        notesLabel.text = "What I Did"
+        notesLabel.textColor = UIColor.white.withAlphaComponent(0.65)
+        notesLabel.font = .systemFont(ofSize: 14, weight: .semibold)
 
         let notesField = UITextView()
         notesField.translatesAutoresizingMaskIntoConstraints = false
         notesField.text = record.notes
         notesField.textColor = .white
         notesField.backgroundColor = UIColor.white.withAlphaComponent(0.08)
-        notesField.font = .systemFont(ofSize: 17, weight: .regular)
-        notesField.layer.cornerRadius = 12
+        notesField.font = .systemFont(ofSize: 18, weight: .regular)
+        notesField.layer.cornerRadius = 13
         notesField.textContainerInset = UIEdgeInsets(
-            top: 10,
-            left: 10,
-            bottom: 10,
-            right: 10
+            top: 12,
+            left: 12,
+            bottom: 12,
+            right: 12
         )
-
-        let notesLabel = UILabel()
-        notesLabel.translatesAutoresizingMaskIntoConstraints = false
-        notesLabel.text = "What I did"
-        notesLabel.textColor = UIColor.white.withAlphaComponent(0.62)
-        notesLabel.font = .systemFont(ofSize: 13, weight: .semibold)
 
         let cancelButton = UIButton(type: .system)
         cancelButton.translatesAutoresizingMaskIntoConstraints = false
@@ -722,6 +744,12 @@ final class FullScreenClockViewController:
         cancelConfig.baseBackgroundColor =
             UIColor.white.withAlphaComponent(0.12)
         cancelConfig.cornerStyle = .large
+        cancelConfig.titleTextAttributesTransformer =
+            UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = .systemFont(ofSize: 18, weight: .semibold)
+                return outgoing
+            }
         cancelButton.configuration = cancelConfig
 
         let saveButton = UIButton(type: .system)
@@ -731,49 +759,13 @@ final class FullScreenClockViewController:
         saveConfig.baseForegroundColor = .black
         saveConfig.baseBackgroundColor = .white
         saveConfig.cornerStyle = .large
+        saveConfig.titleTextAttributesTransformer =
+            UIConfigurationTextAttributesTransformer { incoming in
+                var outgoing = incoming
+                outgoing.font = .systemFont(ofSize: 18, weight: .bold)
+                return outgoing
+            }
         saveButton.configuration = saveConfig
-
-        let fieldsRow = UIStackView(
-            arrangedSubviews: [
-                dateField,
-                startField,
-                endField
-            ]
-        )
-        fieldsRow.translatesAutoresizingMaskIntoConstraints = false
-        fieldsRow.axis = .horizontal
-        fieldsRow.spacing = 10
-        fieldsRow.distribution = .fillEqually
-
-        let leftColumn = UIStackView(
-            arrangedSubviews: [
-                fieldsRow
-            ]
-        )
-        leftColumn.translatesAutoresizingMaskIntoConstraints = false
-        leftColumn.axis = .vertical
-        leftColumn.spacing = 10
-
-        let notesColumn = UIStackView(
-            arrangedSubviews: [
-                notesLabel,
-                notesField
-            ]
-        )
-        notesColumn.translatesAutoresizingMaskIntoConstraints = false
-        notesColumn.axis = .vertical
-        notesColumn.spacing = 7
-
-        let formRow = UIStackView(
-            arrangedSubviews: [
-                leftColumn,
-                notesColumn
-            ]
-        )
-        formRow.translatesAutoresizingMaskIntoConstraints = false
-        formRow.axis = .horizontal
-        formRow.spacing = 14
-        formRow.distribution = .fillEqually
 
         let buttons = UIStackView(
             arrangedSubviews: [
@@ -783,69 +775,96 @@ final class FullScreenClockViewController:
         )
         buttons.translatesAutoresizingMaskIntoConstraints = false
         buttons.axis = .horizontal
-        buttons.spacing = 10
+        buttons.spacing = 14
         buttons.distribution = .fillEqually
 
         editor.view.addSubview(title)
         editor.view.addSubview(subtitle)
-        editor.view.addSubview(formRow)
+        editor.view.addSubview(fieldsRow)
+        editor.view.addSubview(notesLabel)
+        editor.view.addSubview(notesField)
         editor.view.addSubview(buttons)
 
         NSLayoutConstraint.activate([
             title.topAnchor.constraint(
                 equalTo: editor.view.topAnchor,
-                constant: 20
+                constant: 24
             ),
             title.leadingAnchor.constraint(
                 equalTo: editor.view.leadingAnchor,
-                constant: 22
+                constant: 28
             ),
             title.trailingAnchor.constraint(
                 lessThanOrEqualTo: editor.view.trailingAnchor,
-                constant: -22
+                constant: -28
             ),
 
             subtitle.topAnchor.constraint(
                 equalTo: title.bottomAnchor,
-                constant: 2
+                constant: 3
             ),
             subtitle.leadingAnchor.constraint(
                 equalTo: title.leadingAnchor
             ),
             subtitle.trailingAnchor.constraint(
                 lessThanOrEqualTo: editor.view.trailingAnchor,
-                constant: -22
+                constant: -28
             ),
 
-            formRow.topAnchor.constraint(
+            fieldsRow.topAnchor.constraint(
                 equalTo: subtitle.bottomAnchor,
-                constant: 18
-            ),
-            formRow.leadingAnchor.constraint(
-                equalTo: editor.view.leadingAnchor,
                 constant: 22
             ),
-            formRow.trailingAnchor.constraint(
-                equalTo: editor.view.trailingAnchor,
-                constant: -22
+            fieldsRow.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 28
             ),
-            formRow.heightAnchor.constraint(equalToConstant: 130),
+            fieldsRow.trailingAnchor.constraint(
+                equalTo: editor.view.trailingAnchor,
+                constant: -28
+            ),
+            fieldsRow.heightAnchor.constraint(equalToConstant: 82),
 
-            notesField.heightAnchor.constraint(equalToConstant: 101),
+            notesLabel.topAnchor.constraint(
+                equalTo: fieldsRow.bottomAnchor,
+                constant: 18
+            ),
+            notesLabel.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 28
+            ),
+
+            notesField.topAnchor.constraint(
+                equalTo: notesLabel.bottomAnchor,
+                constant: 7
+            ),
+            notesField.leadingAnchor.constraint(
+                equalTo: editor.view.leadingAnchor,
+                constant: 28
+            ),
+            notesField.trailingAnchor.constraint(
+                equalTo: editor.view.trailingAnchor,
+                constant: -28
+            ),
+            notesField.heightAnchor.constraint(equalToConstant: 105),
 
             buttons.topAnchor.constraint(
-                equalTo: formRow.bottomAnchor,
-                constant: 16
+                equalTo: notesField.bottomAnchor,
+                constant: 20
             ),
             buttons.leadingAnchor.constraint(
                 equalTo: editor.view.leadingAnchor,
-                constant: 22
+                constant: 28
             ),
             buttons.trailingAnchor.constraint(
                 equalTo: editor.view.trailingAnchor,
-                constant: -22
+                constant: -28
             ),
-            buttons.heightAnchor.constraint(equalToConstant: 48)
+            buttons.heightAnchor.constraint(equalToConstant: 52),
+            buttons.bottomAnchor.constraint(
+                lessThanOrEqualTo: editor.view.bottomAnchor,
+                constant: -24
+            )
         ])
 
         let nav = UINavigationController(
@@ -854,8 +873,8 @@ final class FullScreenClockViewController:
         nav.setNavigationBarHidden(true, animated: false)
         nav.modalPresentationStyle = .formSheet
         nav.preferredContentSize = CGSize(
-            width: 720,
-            height: 330
+            width: 920,
+            height: 430
         )
 
         cancelButton.addAction(
@@ -894,7 +913,6 @@ final class FullScreenClockViewController:
     }
 
     private func makeShiftEditorField(
-        title: String,
         text: String,
         placeholder: String
     ) -> UITextField {
@@ -903,38 +921,57 @@ final class FullScreenClockViewController:
         field.text = text
         field.placeholder = placeholder
         field.textColor = .white
-        field.font = .systemFont(ofSize: 17, weight: .semibold)
+        field.font = .monospacedDigitSystemFont(
+            ofSize: 19,
+            weight: .semibold
+        )
         field.backgroundColor = UIColor.white.withAlphaComponent(0.08)
         field.layer.cornerRadius = 12
         field.clearButtonMode = .whileEditing
         field.autocapitalizationType = .allCharacters
-        field.heightAnchor.constraint(equalToConstant: 52).isActive = true
-
-        let label = UILabel()
-        label.text = title
-        label.textColor = UIColor.white.withAlphaComponent(0.55)
-        label.font = .systemFont(ofSize: 11, weight: .bold)
-        label.sizeToFit()
-
-        let container = UIView(
+        field.leftView = UIView(
             frame: CGRect(
                 x: 0,
                 y: 0,
-                width: 70,
-                height: 24
+                width: 14,
+                height: 1
             )
         )
-        label.frame = CGRect(
-            x: 10,
-            y: 0,
-            width: 60,
-            height: 24
-        )
-        container.addSubview(label)
-        field.leftView = container
         field.leftViewMode = .always
-
+        field.rightView = UIView(
+            frame: CGRect(
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 1
+            )
+        )
+        field.rightViewMode = .always
         return field
+    }
+
+    private func makeShiftEditorColumn(
+        title: String,
+        field: UITextField
+    ) -> UIStackView {
+        let label = UILabel()
+        label.text = title
+        label.textColor = UIColor.white.withAlphaComponent(0.65)
+        label.font = .systemFont(ofSize: 14, weight: .semibold)
+
+        field.heightAnchor.constraint(
+            equalToConstant: 54
+        ).isActive = true
+
+        let stack = UIStackView(
+            arrangedSubviews: [
+                label,
+                field
+            ]
+        )
+        stack.axis = .vertical
+        stack.spacing = 7
+        return stack
     }
 
     private func updateShift(
