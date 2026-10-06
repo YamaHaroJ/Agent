@@ -442,25 +442,16 @@ final class FullScreenClockViewController:
 
             viewer.navigationItem.leftBarButtonItem =
                 UIBarButtonItem(
-                    systemItem: .close,
-                    primaryAction: UIAction { [weak nav] _ in
-                        nav?.dismiss(animated: true)
-                    }
+                    barButtonSystemItem: .close,
+                    target: self,
+                    action: #selector(closeShiftLogViewer)
                 )
 
             viewer.navigationItem.rightBarButtonItem =
                 UIBarButtonItem(
-                    systemItem: .action,
-                    primaryAction: UIAction { [weak self, weak viewer] _ in
-                        guard
-                            let self,
-                            let viewer
-                        else {
-                            return
-                        }
-
-                        self.shareShiftLog(from: viewer)
-                    }
+                    barButtonSystemItem: .action,
+                    target: self,
+                    action: #selector(shareShiftLogFromViewer)
                 )
 
             present(nav, animated: true)
@@ -470,6 +461,21 @@ final class FullScreenClockViewController:
                 message: error.localizedDescription
             )
         }
+    }
+
+    @objc private func closeShiftLogViewer() {
+        presentedViewController?.dismiss(animated: true)
+    }
+
+    @objc private func shareShiftLogFromViewer() {
+        guard
+            let nav = presentedViewController as? UINavigationController,
+            let source = nav.topViewController
+        else {
+            return
+        }
+
+        shareShiftLog(from: source)
     }
 
     private func shareShiftLog(from source: UIViewController) {
