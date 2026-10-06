@@ -57,6 +57,8 @@ final class FullScreenClockViewController:
     private var activeSegmentStart: Date?
     private var accumulatedShiftSeconds: TimeInterval = 0
     private var lastClockOutDate: Date?
+    private weak var shiftLogViewer: UIViewController?
+    private weak var shiftLogStack: UIStackView?
 
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
@@ -84,6 +86,14 @@ final class FullScreenClockViewController:
     }
 
     // MARK: - Shift timer
+
+    private struct ShiftRecord: Codable {
+        let id: UUID
+        let start: Date
+        let end: Date
+        let workedSeconds: TimeInterval
+        let notes: String
+    }
 
     private enum ShiftDefaultsKey {
         static let start = "clock.shift.start"
@@ -304,7 +314,7 @@ final class FullScreenClockViewController:
         )
 
         alert.addTextField { field in
-            field.placeholder = "Example: calls, applications, follow-ups..."
+            field.placeholder = "Calls, applications, follow-ups..."
             field.autocapitalizationType = .sentences
             field.clearButtonMode = .whileEditing
         }
@@ -343,41 +353,18 @@ final class FullScreenClockViewController:
         }
 
         let end = lastClockOutDate ?? Date()
-        let seconds = max(0, accumulatedShiftSeconds)
+        let record = ShiftRecord(
+            id: UUID(),
+            start: start,
+            end: end,
+            workedSeconds: max(0, accumulatedShiftSeconds),
+            notes: notes
+        )
 
         do {
-            try ensureShiftLogExists()
-
-            let dateFormatter = DateFormatter()
-            dateFormatter.dateStyle = .medium
-            dateFormatter.timeStyle = .none
-
-            let timeFormatter = DateFormatter()
-            timeFormatter.dateStyle = .none
-            timeFormatter.timeStyle = .short
-
-            let entry = """
-
-            (dateFormatter.string(from: start))
-            Clock In:  (timeFormatter.string(from: start))
-            Clock Out: (timeFormatter.string(from: end))
-            Total:     (formattedShiftDuration(seconds))
-            What I did: (notes.isEmpty ? "(no notes)" : notes)
-            --------------------------------------------------
-
-            """
-
-            let handle = try FileHandle(
-                forWritingTo: shiftLogURL
-            )
-            try handle.seekToEnd()
-
-            if let data = entry.data(using: .utf8) {
-                try handle.write(contentsOf: data)
-            }
-
-            try handle.close()
-
+            var records = try loadShiftRecords()
+            records.append(record)
+            try saveShiftRecords(records)
             resetShiftState()
         } catch {
             showShiftAlert(
@@ -388,79 +375,433 @@ final class FullScreenClockViewController:
     }
 
     @objc private func openShiftLog() {
-        do {
-            try ensureShiftLogExists()
+        let viewer = UIViewController()
+        viewer.view.backgroundColor = UIColor(
+            red: 0.08,
+            green: 0.085,
+            blue: 0.09,
+            alpha: 1
+        )
+        viewer.title = "Shift Log"
 
-            let contents = try String(
-                contentsOf: shiftLogURL,
-                encoding: .utf8
+        let scroll = UIScrollView()
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.alwaysBounceVertical = true
+
+        let stack = UIStackView()
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.layoutMargins = UIEdgeInsets(
+            top: 18,
+            left: 18,
+            bottom: 28,
+            right: 18
+        )
+        stack.isLayoutMarginsRelativeArrangement = true
+
+        scroll.addSubview(stack)
+        viewer.view.addSubview(scroll)
+
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: viewer.view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: viewer.view.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: viewer.view.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: viewer.view.bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: scroll.contentLayoutGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scroll.contentLayoutGuide.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scroll.contentLayoutGuide.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: scroll.contentLayoutGuide.bottomAnchor),
+            stack.widthAnchor.constraint(equalTo: scroll.frameLayoutGuide.widthAnchor)
+        ])
+
+        let nav = UINavigationController(
+            rootViewController: viewer
+        )
+        nav.modalPresentationStyle = .formSheet
+        nav.preferredContentSize = CGSize(width: 720, height: 620)
+
+        viewer.navigationItem.leftBarButtonItem =
+            UIBarButtonItem(
+                barButtonSystemItem: .close,
+                target: self,
+                action: #selector(closeShiftLogViewer)
             )
 
-            let viewer = UIViewController()
-            viewer.view.backgroundColor = .systemBackground
-            viewer.title = "Shift Log"
+        let addButton = UIBarButtonItem(
+            barButtonSystemItem: .add,
+            target: self,
+            action: #selector(promptToAddPastShift)
+        )
 
-            let textView = UITextView()
-            textView.translatesAutoresizingMaskIntoConstraints = false
-            textView.isEditable = false
-            textView.alwaysBounceVertical = true
-            textView.backgroundColor = .systemBackground
-            textView.textColor = .label
-            textView.font = .monospacedSystemFont(
-                ofSize: 15,
-                weight: .regular
-            )
-            textView.text = contents
-            textView.textContainerInset = UIEdgeInsets(
-                top: 18,
-                left: 16,
-                bottom: 30,
-                right: 16
-            )
+        let shareButton = UIBarButtonItem(
+            barButtonSystemItem: .action,
+            target: self,
+            action: #selector(shareShiftLogFromViewer)
+        )
 
-            viewer.view.addSubview(textView)
+        viewer.navigationItem.rightBarButtonItems = [
+            shareButton,
+            addButton
+        ]
 
-            NSLayoutConstraint.activate([
-                textView.leadingAnchor.constraint(
-                    equalTo: viewer.view.leadingAnchor
-                ),
-                textView.trailingAnchor.constraint(
-                    equalTo: viewer.view.trailingAnchor
-                ),
-                textView.topAnchor.constraint(
-                    equalTo: viewer.view.topAnchor
-                ),
-                textView.bottomAnchor.constraint(
-                    equalTo: viewer.view.bottomAnchor
-                )
-            ])
+        shiftLogViewer = viewer
+        shiftLogStack = stack
+        refreshShiftLogViewer()
 
-            let nav = UINavigationController(
-                rootViewController: viewer
-            )
-            nav.modalPresentationStyle = .formSheet
+        present(nav, animated: true)
+    }
 
-            viewer.navigationItem.leftBarButtonItem =
-                UIBarButtonItem(
-                    barButtonSystemItem: .close,
-                    target: self,
-                    action: #selector(closeShiftLogViewer)
-                )
-
-            viewer.navigationItem.rightBarButtonItem =
-                UIBarButtonItem(
-                    barButtonSystemItem: .action,
-                    target: self,
-                    action: #selector(shareShiftLogFromViewer)
-                )
-
-            present(nav, animated: true)
-        } catch {
-            showShiftAlert(
-                title: "Couldn't Open Shift Log",
-                message: error.localizedDescription
-            )
+    private func refreshShiftLogViewer() {
+        guard let stack = shiftLogStack else {
+            return
         }
+
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        do {
+            let records = try loadShiftRecords()
+                .sorted { $0.start > $1.start }
+
+            let summary = makeShiftSummaryView(records: records)
+            stack.addArrangedSubview(summary)
+
+            if records.isEmpty {
+                let empty = UILabel()
+                empty.text = "No saved shifts yet.\nTap + to add a past shift."
+                empty.textColor = UIColor.white.withAlphaComponent(0.55)
+                empty.font = .systemFont(ofSize: 16, weight: .medium)
+                empty.numberOfLines = 0
+                empty.textAlignment = .center
+                empty.heightAnchor.constraint(equalToConstant: 130).isActive = true
+                stack.addArrangedSubview(empty)
+                return
+            }
+
+            for record in records {
+                stack.addArrangedSubview(
+                    makeShiftCard(record: record)
+                )
+            }
+        } catch {
+            let label = UILabel()
+            label.text = "Couldn't load shifts.\n\(error.localizedDescription)"
+            label.textColor = .systemRed
+            label.numberOfLines = 0
+            stack.addArrangedSubview(label)
+        }
+    }
+
+    private func makeShiftSummaryView(
+        records: [ShiftRecord]
+    ) -> UIView {
+        let container = UIView()
+        container.backgroundColor = UIColor.white.withAlphaComponent(0.055)
+        container.layer.cornerRadius = 16
+
+        let totalSeconds = records.reduce(0) {
+            $0 + $1.workedSeconds
+        }
+
+        let title = UILabel()
+        title.translatesAutoresizingMaskIntoConstraints = false
+        title.text = records.count == 1
+            ? "1 saved shift"
+            : "\(records.count) saved shifts"
+        title.textColor = .white
+        title.font = .systemFont(ofSize: 18, weight: .bold)
+
+        let total = UILabel()
+        total.translatesAutoresizingMaskIntoConstraints = false
+        total.text = "Total logged: \(formattedShiftDuration(totalSeconds))"
+        total.textColor = UIColor.white.withAlphaComponent(0.58)
+        total.font = .systemFont(ofSize: 14, weight: .medium)
+
+        container.addSubview(title)
+        container.addSubview(total)
+
+        NSLayoutConstraint.activate([
+            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
+            title.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 13),
+
+            total.leadingAnchor.constraint(equalTo: title.leadingAnchor),
+            total.trailingAnchor.constraint(equalTo: title.trailingAnchor),
+            total.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
+            total.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -13)
+        ])
+
+        return container
+    }
+
+    private func makeShiftCard(
+        record: ShiftRecord
+    ) -> UIView {
+        let card = UIView()
+        card.backgroundColor = UIColor.white.withAlphaComponent(0.075)
+        card.layer.cornerRadius = 16
+
+        let date = UILabel()
+        date.translatesAutoresizingMaskIntoConstraints = false
+        date.text = shiftDateFormatter.string(from: record.start)
+        date.textColor = .white
+        date.font = .systemFont(ofSize: 18, weight: .bold)
+
+        let time = UILabel()
+        time.translatesAutoresizingMaskIntoConstraints = false
+        time.text =
+            "\(shiftTimeFormatter.string(from: record.start)) – " +
+            "\(shiftTimeFormatter.string(from: record.end))  ·  " +
+            formattedShiftDuration(record.workedSeconds)
+        time.textColor = UIColor.white.withAlphaComponent(0.68)
+        time.font = .monospacedDigitSystemFont(
+            ofSize: 14,
+            weight: .medium
+        )
+
+        let notes = UILabel()
+        notes.translatesAutoresizingMaskIntoConstraints = false
+        notes.text = record.notes.isEmpty
+            ? "No notes"
+            : record.notes
+        notes.textColor = record.notes.isEmpty
+            ? UIColor.white.withAlphaComponent(0.34)
+            : UIColor.white.withAlphaComponent(0.88)
+        notes.font = .systemFont(ofSize: 15, weight: .regular)
+        notes.numberOfLines = 0
+
+        let deleteButton = UIButton(type: .system)
+        deleteButton.translatesAutoresizingMaskIntoConstraints = false
+        deleteButton.tintColor = .systemRed
+        deleteButton.setImage(
+            UIImage(systemName: "trash"),
+            for: .normal
+        )
+        deleteButton.accessibilityLabel = "Delete Shift"
+        deleteButton.addAction(
+            UIAction { [weak self] _ in
+                self?.confirmDeleteShift(record)
+            },
+            for: .touchUpInside
+        )
+
+        card.addSubview(date)
+        card.addSubview(time)
+        card.addSubview(notes)
+        card.addSubview(deleteButton)
+
+        NSLayoutConstraint.activate([
+            date.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            date.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
+            date.trailingAnchor.constraint(
+                lessThanOrEqualTo: deleteButton.leadingAnchor,
+                constant: -8
+            ),
+
+            deleteButton.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+            deleteButton.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            deleteButton.widthAnchor.constraint(equalToConstant: 36),
+            deleteButton.heightAnchor.constraint(equalToConstant: 36),
+
+            time.leadingAnchor.constraint(equalTo: date.leadingAnchor),
+            time.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            time.topAnchor.constraint(equalTo: date.bottomAnchor, constant: 3),
+
+            notes.leadingAnchor.constraint(equalTo: date.leadingAnchor),
+            notes.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+            notes.topAnchor.constraint(equalTo: time.bottomAnchor, constant: 10),
+            notes.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -14)
+        ])
+
+        return card
+    }
+
+    private func confirmDeleteShift(
+        _ record: ShiftRecord
+    ) {
+        guard let viewer = shiftLogViewer else {
+            return
+        }
+
+        let alert = UIAlertController(
+            title: "Delete Shift?",
+            message:
+                shiftDateFormatter.string(from: record.start) +
+                " · " +
+                formattedShiftDuration(record.workedSeconds),
+            preferredStyle: .alert
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Delete",
+                style: .destructive
+            ) { [weak self] _ in
+                self?.deleteShift(id: record.id)
+            }
+        )
+
+        viewer.present(alert, animated: true)
+    }
+
+    private func deleteShift(id: UUID) {
+        do {
+            var records = try loadShiftRecords()
+            records.removeAll { $0.id == id }
+            try saveShiftRecords(records)
+            refreshShiftLogViewer()
+        } catch {
+            showShiftLogError(error.localizedDescription)
+        }
+    }
+
+    @objc private func promptToAddPastShift() {
+        guard let viewer = shiftLogViewer else {
+            return
+        }
+
+        let alert = UIAlertController(
+            title: "Add Past Shift",
+            message: "Enter the date and times.",
+            preferredStyle: .alert
+        )
+
+        alert.addTextField { field in
+            field.placeholder = "Date (10/5/2026)"
+            field.text = self.pastShiftDateFormatter.string(from: Date())
+            field.keyboardType = .numbersAndPunctuation
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "Clock in (9:00 AM)"
+            field.text = "9:00 AM"
+            field.autocapitalizationType = .allCharacters
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "Clock out (5:00 PM)"
+            field.text = "5:00 PM"
+            field.autocapitalizationType = .allCharacters
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "What did you do?"
+            field.autocapitalizationType = .sentences
+        }
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Add",
+                style: .default
+            ) { [weak self, weak alert] _ in
+                guard
+                    let self,
+                    let fields = alert?.textFields,
+                    fields.count == 4
+                else {
+                    return
+                }
+
+                self.addPastShift(
+                    dateText: fields[0].text ?? "",
+                    startText: fields[1].text ?? "",
+                    endText: fields[2].text ?? "",
+                    notes: fields[3].text ?? ""
+                )
+            }
+        )
+
+        viewer.present(alert, animated: true)
+    }
+
+    private func addPastShift(
+        dateText: String,
+        startText: String,
+        endText: String,
+        notes: String
+    ) {
+        let date = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startTime = startText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endTime = endText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "M/d/yyyy h:mm a"
+
+        guard
+            let start = parser.date(from: "\(date) \(startTime)"),
+            let end = parser.date(from: "\(date) \(endTime)")
+        else {
+            showShiftLogError(
+                "Use a date like 10/5/2026 and times like 9:00 AM."
+            )
+            return
+        }
+
+        guard end > start else {
+            showShiftLogError(
+                "Clock Out must be later than Clock In."
+            )
+            return
+        }
+
+        let record = ShiftRecord(
+            id: UUID(),
+            start: start,
+            end: end,
+            workedSeconds: end.timeIntervalSince(start),
+            notes: notes.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+        )
+
+        do {
+            var records = try loadShiftRecords()
+            records.append(record)
+            try saveShiftRecords(records)
+            refreshShiftLogViewer()
+        } catch {
+            showShiftLogError(error.localizedDescription)
+        }
+    }
+
+    private func showShiftLogError(
+        _ message: String
+    ) {
+        guard let viewer = shiftLogViewer else {
+            return
+        }
+
+        let alert = UIAlertController(
+            title: "Shift Log",
+            message: message,
+            preferredStyle: .alert
+        )
+        alert.addAction(
+            UIAlertAction(
+                title: "OK",
+                style: .default
+            )
+        )
+        viewer.present(alert, animated: true)
     }
 
     @objc private func closeShiftLogViewer() {
@@ -475,12 +816,20 @@ final class FullScreenClockViewController:
             return
         }
 
-        shareShiftLog(from: source)
+        do {
+            let records = try loadShiftRecords()
+            try writeReadableShiftDocument(records)
+            shareShiftLog(from: source)
+        } catch {
+            showShiftLogError(error.localizedDescription)
+        }
     }
 
-    private func shareShiftLog(from source: UIViewController) {
+    private func shareShiftLog(
+        from source: UIViewController
+    ) {
         let sheet = UIActivityViewController(
-            activityItems: [shiftLogURL],
+            activityItems: [shiftReadableLogURL],
             applicationActivities: nil
         )
 
@@ -497,32 +846,124 @@ final class FullScreenClockViewController:
         source.present(sheet, animated: true)
     }
 
-    private var shiftLogURL: URL {
-        let documents = FileManager.default.urls(
+    private var shiftRecordsURL: URL {
+        documentsDirectory.appendingPathComponent("Shift Records.json")
+    }
+
+    private var shiftReadableLogURL: URL {
+        documentsDirectory.appendingPathComponent("Shift Log.txt")
+    }
+
+    private var documentsDirectory: URL {
+        FileManager.default.urls(
             for: .documentDirectory,
             in: .userDomainMask
         ).first!
-
-        return documents.appendingPathComponent("Shift Log.txt")
     }
 
-    private func ensureShiftLogExists() throws {
-        let url = shiftLogURL
-
-        if !FileManager.default.fileExists(
-            atPath: url.path
-        ) {
-            let header = """
-            SHIFT LOG
-            =========
-
-            """
-            try header.write(
-                to: url,
-                atomically: true,
-                encoding: .utf8
-            )
+    private func loadShiftRecords() throws -> [ShiftRecord] {
+        guard FileManager.default.fileExists(
+            atPath: shiftRecordsURL.path
+        ) else {
+            return []
         }
+
+        let data = try Data(contentsOf: shiftRecordsURL)
+        return try JSONDecoder().decode(
+            [ShiftRecord].self,
+            from: data
+        )
+    }
+
+    private func saveShiftRecords(
+        _ records: [ShiftRecord]
+    ) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+
+        let data = try encoder.encode(records)
+        try data.write(
+            to: shiftRecordsURL,
+            options: .atomic
+        )
+
+        try writeReadableShiftDocument(records)
+    }
+
+    private func writeReadableShiftDocument(
+        _ records: [ShiftRecord]
+    ) throws {
+        let sorted = records.sorted {
+            $0.start < $1.start
+        }
+
+        var lines: [String] = [
+            "SHIFT LOG",
+            "=========",
+            ""
+        ]
+
+        for record in sorted {
+            lines.append(
+                shiftDateFormatter.string(from: record.start)
+            )
+            lines.append(
+                "  \(shiftTimeFormatter.string(from: record.start)) – " +
+                "\(shiftTimeFormatter.string(from: record.end))"
+            )
+            lines.append(
+                "  Total: \(formattedShiftDuration(record.workedSeconds))"
+            )
+
+            if !record.notes.isEmpty {
+                lines.append(
+                    "  What I did: \(record.notes)"
+                )
+            }
+
+            lines.append("")
+        }
+
+        if sorted.isEmpty {
+            lines.append("No saved shifts.")
+            lines.append("")
+        }
+
+        let total = sorted.reduce(0) {
+            $0 + $1.workedSeconds
+        }
+
+        lines.append(
+            "TOTAL LOGGED: \(formattedShiftDuration(total))"
+        )
+        lines.append("")
+
+        try lines.joined(separator: "\n").write(
+            to: shiftReadableLogURL,
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private var shiftDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
+        return formatter
+    }
+
+    private var shiftTimeFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }
+
+    private var pastShiftDateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "M/d/yyyy"
+        return formatter
     }
 
     private func restoreShiftState() {
@@ -665,15 +1106,19 @@ final class FullScreenClockViewController:
     private func formattedShiftDuration(
         _ seconds: TimeInterval
     ) -> String {
-        let total = Int(seconds.rounded())
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
+        let totalMinutes = Int((seconds / 60).rounded())
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
 
-        if hours > 0 {
-            return "(hours)h (minutes)m"
+        if hours > 0 && minutes > 0 {
+            return "\(hours)h \(minutes)m"
         }
 
-        return "(minutes)m"
+        if hours > 0 {
+            return "\(hours)h"
+        }
+
+        return "\(minutes)m"
     }
 
     private func showShiftAlert(
