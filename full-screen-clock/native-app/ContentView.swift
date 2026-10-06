@@ -47,6 +47,7 @@ final class FullScreenClockViewController:
     // SHIFT_TIMER
     private var shiftPanel: UIVisualEffectView!
     private var shiftTimerLabel: UILabel!
+    private var shiftBreakLabel: UILabel!
     private var clockInButton: UIButton!
     private var clockOutButton: UIButton!
     private var saveShiftButton: UIButton!
@@ -59,6 +60,7 @@ final class FullScreenClockViewController:
     private var lastClockOutDate: Date?
     private weak var shiftLogViewer: UIViewController?
     private weak var shiftLogStack: UIStackView?
+    private weak var shiftLogModeControl: UISegmentedControl?
 
     private var mediaRemoteHandle: UnsafeMutableRawPointer?
     private var mediaRemoteSendCommand: MRMediaRemoteSendCommand?
@@ -123,6 +125,16 @@ final class FullScreenClockViewController:
         )
         shiftTimerLabel.textAlignment = .center
 
+        shiftBreakLabel = UILabel()
+        shiftBreakLabel.translatesAutoresizingMaskIntoConstraints = false
+        shiftBreakLabel.text = "BRK 00:00"
+        shiftBreakLabel.textColor = UIColor.white.withAlphaComponent(0.62)
+        shiftBreakLabel.font = .monospacedDigitSystemFont(
+            ofSize: 11,
+            weight: .semibold
+        )
+        shiftBreakLabel.textAlignment = .center
+
         clockInButton = makeShiftButton(
             title: "IN",
             symbol: "play.fill",
@@ -150,6 +162,7 @@ final class FullScreenClockViewController:
         let row = UIStackView(
             arrangedSubviews: [
                 shiftTimerLabel,
+                shiftBreakLabel,
                 clockInButton,
                 clockOutButton,
                 saveShiftButton,
@@ -174,7 +187,7 @@ final class FullScreenClockViewController:
                 equalTo: view.safeAreaLayoutGuide.topAnchor,
                 constant: 10
             ),
-            shiftPanel.widthAnchor.constraint(equalToConstant: 300),
+            shiftPanel.widthAnchor.constraint(equalToConstant: 390),
             shiftPanel.heightAnchor.constraint(equalToConstant: 52),
 
             row.leadingAnchor.constraint(
@@ -190,6 +203,7 @@ final class FullScreenClockViewController:
             ),
 
             shiftTimerLabel.widthAnchor.constraint(equalToConstant: 78),
+            shiftBreakLabel.widthAnchor.constraint(equalToConstant: 80),
             clockInButton.widthAnchor.constraint(equalToConstant: 46),
             clockOutButton.widthAnchor.constraint(equalToConstant: 52),
             saveShiftButton.widthAnchor.constraint(equalToConstant: 36),
@@ -384,6 +398,17 @@ final class FullScreenClockViewController:
         )
         viewer.title = "Shift Log"
 
+        let modeControl = UISegmentedControl(
+            items: ["Shifts", "Summary"]
+        )
+        modeControl.selectedSegmentIndex = 0
+        modeControl.addTarget(
+            self,
+            action: #selector(shiftLogModeChanged(_:)),
+            for: .valueChanged
+        )
+        viewer.navigationItem.titleView = modeControl
+
         let scroll = UIScrollView()
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.alwaysBounceVertical = true
@@ -448,9 +473,16 @@ final class FullScreenClockViewController:
 
         shiftLogViewer = viewer
         shiftLogStack = stack
+        shiftLogModeControl = modeControl
         refreshShiftLogViewer()
 
         present(nav, animated: true)
+    }
+
+    @objc private func shiftLogModeChanged(
+        _ sender: UISegmentedControl
+    ) {
+        refreshShiftLogViewer()
     }
 
     private func refreshShiftLogViewer() {
@@ -467,8 +499,13 @@ final class FullScreenClockViewController:
             let records = try loadShiftRecords()
                 .sorted { $0.start > $1.start }
 
-            let summary = makeShiftSummaryView(records: records)
-            stack.addArrangedSubview(summary)
+            if shiftLogModeControl?.selectedSegmentIndex == 1 {
+                populateShiftSummary(
+                    records: records,
+                    stack: stack
+                )
+                return
+            }
 
             if records.isEmpty {
                 let empty = UILabel()
@@ -477,7 +514,9 @@ final class FullScreenClockViewController:
                 empty.font = .systemFont(ofSize: 16, weight: .medium)
                 empty.numberOfLines = 0
                 empty.textAlignment = .center
-                empty.heightAnchor.constraint(equalToConstant: 130).isActive = true
+                empty.heightAnchor.constraint(
+                    equalToConstant: 130
+                ).isActive = true
                 stack.addArrangedSubview(empty)
                 return
             }
@@ -496,46 +535,282 @@ final class FullScreenClockViewController:
         }
     }
 
-    private func makeShiftSummaryView(
-        records: [ShiftRecord]
-    ) -> UIView {
-        let container = UIView()
-        container.backgroundColor = UIColor.white.withAlphaComponent(0.055)
-        container.layer.cornerRadius = 16
+    private func populateShiftSummary(
+        records: [ShiftRecord],
+        stack: UIStackView
+    ) {
+        let calendar = Calendar.current
+        let now = Date()
 
-        let totalSeconds = records.reduce(0) {
-            $0 + $1.workedSeconds
+        let today = records.filter {
+            calendar.isDate($0.start, inSameDayAs: now)
         }
 
-        let title = UILabel()
-        title.translatesAutoresizingMaskIntoConstraints = false
-        title.text = records.count == 1
-            ? "1 saved shift"
-            : "\(records.count) saved shifts"
-        title.textColor = .white
-        title.font = .systemFont(ofSize: 18, weight: .bold)
+        let weekInterval = calendar.dateInterval(
+            of: .weekOfYear,
+            for: now
+        )
+        let thisWeek = records.filter {
+            weekInterval?.contains($0.start) ?? false
+        }
+
+        let monthInterval = calendar.dateInterval(
+            of: .month,
+            for: now
+        )
+        let thisMonth = records.filter {
+            monthInterval?.contains($0.start) ?? false
+        }
+
+        stack.addArrangedSubview(
+            makePeriodSummaryCard(
+                title: "Today",
+                records: today
+            )
+        )
+        stack.addArrangedSubview(
+            makePeriodSummaryCard(
+                title: "This Week",
+                records: thisWeek
+            )
+        )
+        stack.addArrangedSubview(
+            makePeriodSummaryCard(
+                title: "This Month",
+                records: thisMonth
+            )
+        )
+
+        let breakdownTitle = UILabel()
+        breakdownTitle.text = "Daily Breakdown · This Week"
+        breakdownTitle.textColor = UIColor.white.withAlphaComponent(0.72)
+        breakdownTitle.font = .systemFont(
+            ofSize: 15,
+            weight: .bold
+        )
+        stack.setCustomSpacing(22, after: stack.arrangedSubviews.last!)
+        stack.addArrangedSubview(breakdownTitle)
+
+        let grouped = Dictionary(
+            grouping: thisWeek
+        ) {
+            calendar.startOfDay(for: $0.start)
+        }
+
+        let days = grouped.keys.sorted(by: >)
+
+        if days.isEmpty {
+            let empty = UILabel()
+            empty.text = "No shifts logged this week."
+            empty.textColor = UIColor.white.withAlphaComponent(0.42)
+            empty.font = .systemFont(ofSize: 15, weight: .medium)
+            stack.addArrangedSubview(empty)
+        } else {
+            for day in days {
+                stack.addArrangedSubview(
+                    makeDailySummaryRow(
+                        day: day,
+                        records: grouped[day] ?? []
+                    )
+                )
+            }
+        }
+    }
+
+    private func makePeriodSummaryCard(
+        title: String,
+        records: [ShiftRecord]
+    ) -> UIView {
+        let card = UIView()
+        card.backgroundColor = UIColor.white.withAlphaComponent(0.075)
+        card.layer.cornerRadius = 16
+
+        let titleLabel = UILabel()
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.text = title
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(
+            ofSize: 19,
+            weight: .bold
+        )
+
+        let worked = records.reduce(0) {
+            $0 + $1.workedSeconds
+        }
+        let breaks = breakSecondsAcrossDay(records)
+
+        let stats = UILabel()
+        stats.translatesAutoresizingMaskIntoConstraints = false
+        stats.text =
+            "Worked  \(formattedShiftDuration(worked))    •    " +
+            "Breaks  \(formattedShiftDuration(breaks))"
+        stats.textColor = UIColor.white.withAlphaComponent(0.66)
+        stats.font = .monospacedDigitSystemFont(
+            ofSize: 15,
+            weight: .medium
+        )
+
+        let count = UILabel()
+        count.translatesAutoresizingMaskIntoConstraints = false
+        count.text = records.count == 1
+            ? "1 shift"
+            : "\(records.count) shifts"
+        count.textColor = UIColor.white.withAlphaComponent(0.38)
+        count.font = .systemFont(
+            ofSize: 13,
+            weight: .medium
+        )
+
+        card.addSubview(titleLabel)
+        card.addSubview(stats)
+        card.addSubview(count)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(
+                equalTo: card.leadingAnchor,
+                constant: 16
+            ),
+            titleLabel.topAnchor.constraint(
+                equalTo: card.topAnchor,
+                constant: 14
+            ),
+
+            stats.leadingAnchor.constraint(
+                equalTo: titleLabel.leadingAnchor
+            ),
+            stats.topAnchor.constraint(
+                equalTo: titleLabel.bottomAnchor,
+                constant: 7
+            ),
+            stats.trailingAnchor.constraint(
+                lessThanOrEqualTo: card.trailingAnchor,
+                constant: -16
+            ),
+
+            count.leadingAnchor.constraint(
+                equalTo: titleLabel.leadingAnchor
+            ),
+            count.topAnchor.constraint(
+                equalTo: stats.bottomAnchor,
+                constant: 5
+            ),
+            count.bottomAnchor.constraint(
+                equalTo: card.bottomAnchor,
+                constant: -14
+            )
+        ])
+
+        return card
+    }
+
+    private func makeDailySummaryRow(
+        day: Date,
+        records: [ShiftRecord]
+    ) -> UIView {
+        let row = UIView()
+        row.backgroundColor = UIColor.white.withAlphaComponent(0.05)
+        row.layer.cornerRadius = 13
+
+        let date = UILabel()
+        date.translatesAutoresizingMaskIntoConstraints = false
+        date.text = shiftDateFormatter.string(from: day)
+        date.textColor = .white
+        date.font = .systemFont(ofSize: 15, weight: .semibold)
+
+        let worked = records.reduce(0) {
+            $0 + $1.workedSeconds
+        }
+        let breaks = breakSecondsAcrossDay(records)
 
         let total = UILabel()
         total.translatesAutoresizingMaskIntoConstraints = false
-        total.text = "Total logged: \(formattedShiftDuration(totalSeconds))"
-        total.textColor = UIColor.white.withAlphaComponent(0.58)
-        total.font = .systemFont(ofSize: 14, weight: .medium)
+        total.text =
+            "\(formattedShiftDuration(worked)) worked  ·  " +
+            "\(formattedShiftDuration(breaks)) break"
+        total.textColor = UIColor.white.withAlphaComponent(0.56)
+        total.font = .monospacedDigitSystemFont(
+            ofSize: 13,
+            weight: .regular
+        )
+        total.textAlignment = .right
 
-        container.addSubview(title)
-        container.addSubview(total)
+        row.addSubview(date)
+        row.addSubview(total)
 
         NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 16),
-            title.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
-            title.topAnchor.constraint(equalTo: container.topAnchor, constant: 13),
+            date.leadingAnchor.constraint(
+                equalTo: row.leadingAnchor,
+                constant: 14
+            ),
+            date.topAnchor.constraint(
+                equalTo: row.topAnchor,
+                constant: 12
+            ),
+            date.bottomAnchor.constraint(
+                equalTo: row.bottomAnchor,
+                constant: -12
+            ),
 
-            total.leadingAnchor.constraint(equalTo: title.leadingAnchor),
-            total.trailingAnchor.constraint(equalTo: title.trailingAnchor),
-            total.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 3),
-            total.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -13)
+            total.trailingAnchor.constraint(
+                equalTo: row.trailingAnchor,
+                constant: -14
+            ),
+            total.centerYAnchor.constraint(
+                equalTo: date.centerYAnchor
+            ),
+            total.leadingAnchor.constraint(
+                greaterThanOrEqualTo: date.trailingAnchor,
+                constant: 12
+            )
         ])
 
-        return container
+        return row
+    }
+
+    private func breakSeconds(
+        for record: ShiftRecord
+    ) -> TimeInterval {
+        max(
+            0,
+            record.end.timeIntervalSince(record.start) -
+                record.workedSeconds
+        )
+    }
+
+    private func breakSecondsAcrossDay(
+        _ records: [ShiftRecord]
+    ) -> TimeInterval {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: records) {
+            calendar.startOfDay(for: $0.start)
+        }
+
+        var total: TimeInterval = 0
+
+        for dayRecords in grouped.values {
+            let sorted = dayRecords.sorted {
+                $0.start < $1.start
+            }
+
+            total += sorted.reduce(0) {
+                $0 + breakSeconds(for: $1)
+            }
+
+            if sorted.count > 1 {
+                for index in 1..<sorted.count {
+                    let previous = sorted[index - 1]
+                    let current = sorted[index]
+
+                    if current.start > previous.end {
+                        total += current.start.timeIntervalSince(
+                            previous.end
+                        )
+                    }
+                }
+            }
+        }
+
+        return max(0, total)
     }
 
     private func makeShiftCard(
@@ -556,7 +831,8 @@ final class FullScreenClockViewController:
         time.text =
             "\(shiftTimeFormatter.string(from: record.start)) – " +
             "\(shiftTimeFormatter.string(from: record.end))  ·  " +
-            formattedShiftDuration(record.workedSeconds)
+            "Work \(formattedShiftDuration(record.workedSeconds))  ·  " +
+            "Break \(formattedShiftDuration(breakSeconds(for: record)))"
         time.textColor = UIColor.white.withAlphaComponent(0.68)
         time.font = .monospacedDigitSystemFont(
             ofSize: 14,
@@ -691,6 +967,16 @@ final class FullScreenClockViewController:
             placeholder: "5:00 PM"
         )
 
+        let breakField = makeShiftEditorField(
+            text: String(
+                Int(
+                    (breakSeconds(for: record) / 60).rounded()
+                )
+            ),
+            placeholder: "30"
+        )
+        breakField.keyboardType = .numberPad
+
         let dateColumn = makeShiftEditorColumn(
             title: "Date",
             field: dateField
@@ -703,12 +989,17 @@ final class FullScreenClockViewController:
             title: "Clock Out",
             field: endField
         )
+        let breakColumn = makeShiftEditorColumn(
+            title: "Break (min)",
+            field: breakField
+        )
 
         let fieldsRow = UIStackView(
             arrangedSubviews: [
                 dateColumn,
                 startColumn,
-                endColumn
+                endColumn,
+                breakColumn
             ]
         )
         fieldsRow.translatesAutoresizingMaskIntoConstraints = false
@@ -885,12 +1176,13 @@ final class FullScreenClockViewController:
         )
 
         saveButton.addAction(
-            UIAction { [weak self, weak nav, weak dateField, weak startField, weak endField, weak notesField] _ in
+            UIAction { [weak self, weak nav, weak dateField, weak startField, weak endField, weak breakField, weak notesField] _ in
                 guard
                     let self,
                     let dateText = dateField?.text,
                     let startText = startField?.text,
                     let endText = endField?.text,
+                    let breakText = breakField?.text,
                     let notes = notesField?.text
                 else {
                     return
@@ -902,6 +1194,7 @@ final class FullScreenClockViewController:
                         dateText: dateText,
                         startText: startText,
                         endText: endText,
+                        breakText: breakText,
                         notes: notes
                     )
                 }
@@ -979,6 +1272,7 @@ final class FullScreenClockViewController:
         dateText: String,
         startText: String,
         endText: String,
+        breakText: String,
         notes: String
     ) {
         let date = dateText.trimmingCharacters(
@@ -1012,11 +1306,28 @@ final class FullScreenClockViewController:
             return
         }
 
+        let breakMinutes = Int(
+            breakText.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+        ) ?? 0
+        let breakDuration = TimeInterval(
+            max(0, breakMinutes) * 60
+        )
+        let span = end.timeIntervalSince(start)
+
+        guard breakDuration <= span else {
+            showShiftLogError(
+                "Break time can't be longer than the shift."
+            )
+            return
+        }
+
         let updated = ShiftRecord(
             id: record.id,
             start: start,
             end: end,
-            workedSeconds: end.timeIntervalSince(start),
+            workedSeconds: span - breakDuration,
             notes: notes.trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
@@ -1118,6 +1429,12 @@ final class FullScreenClockViewController:
         }
 
         alert.addTextField { field in
+            field.placeholder = "Break minutes (0)"
+            field.text = "0"
+            field.keyboardType = .numberPad
+        }
+
+        alert.addTextField { field in
             field.placeholder = "What did you do?"
             field.autocapitalizationType = .sentences
         }
@@ -1137,7 +1454,7 @@ final class FullScreenClockViewController:
                 guard
                     let self,
                     let fields = alert?.textFields,
-                    fields.count == 4
+                    fields.count == 5
                 else {
                     return
                 }
@@ -1146,7 +1463,8 @@ final class FullScreenClockViewController:
                     dateText: fields[0].text ?? "",
                     startText: fields[1].text ?? "",
                     endText: fields[2].text ?? "",
-                    notes: fields[3].text ?? ""
+                    breakText: fields[3].text ?? "0",
+                    notes: fields[4].text ?? ""
                 )
             }
         )
@@ -1158,6 +1476,7 @@ final class FullScreenClockViewController:
         dateText: String,
         startText: String,
         endText: String,
+        breakText: String,
         notes: String
     ) {
         let date = dateText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1185,11 +1504,28 @@ final class FullScreenClockViewController:
             return
         }
 
+        let breakMinutes = Int(
+            breakText.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+        ) ?? 0
+        let breakDuration = TimeInterval(
+            max(0, breakMinutes) * 60
+        )
+        let span = end.timeIntervalSince(start)
+
+        guard breakDuration <= span else {
+            showShiftLogError(
+                "Break time can't be longer than the shift."
+            )
+            return
+        }
+
         let record = ShiftRecord(
             id: UUID(),
             start: start,
             end: end,
-            workedSeconds: end.timeIntervalSince(start),
+            workedSeconds: span - breakDuration,
             notes: notes.trimmingCharacters(
                 in: .whitespacesAndNewlines
             )
@@ -1334,7 +1670,10 @@ final class FullScreenClockViewController:
                 "\(shiftTimeFormatter.string(from: record.end))"
             )
             lines.append(
-                "  Total: \(formattedShiftDuration(record.workedSeconds))"
+                "  Worked: \(formattedShiftDuration(record.workedSeconds))"
+            )
+            lines.append(
+                "  Break:  \(formattedShiftDuration(breakSeconds(for: record)))"
             )
 
             if !record.notes.isEmpty {
@@ -1356,7 +1695,10 @@ final class FullScreenClockViewController:
         }
 
         lines.append(
-            "TOTAL LOGGED: \(formattedShiftDuration(total))"
+            "TOTAL WORKED: \(formattedShiftDuration(total))"
+        )
+        lines.append(
+            "TOTAL BREAKS: \(formattedShiftDuration(breakSecondsAcrossDay(sorted)))"
         )
         lines.append("")
 
@@ -1489,6 +1831,18 @@ final class FullScreenClockViewController:
         return max(0, seconds)
     }
 
+    private func currentShiftBreakSeconds() -> TimeInterval {
+        guard let start = shiftStartDate else {
+            return 0
+        }
+
+        let elapsed = Date().timeIntervalSince(start)
+        return max(
+            0,
+            elapsed - currentShiftSeconds()
+        )
+    }
+
     private func refreshShiftUI() {
         guard shiftTimerLabel != nil else {
             return
@@ -1496,6 +1850,9 @@ final class FullScreenClockViewController:
 
         shiftTimerLabel.text =
             formattedTimer(currentShiftSeconds())
+
+        shiftBreakLabel.text =
+            "BRK " + formattedTimer(currentShiftBreakSeconds())
 
         let running = activeSegmentStart != nil
         let hasShift = shiftStartDate != nil
