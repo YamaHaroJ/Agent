@@ -68,6 +68,11 @@ if ! grep -q "ClockChromeC" "$SOURCE_DIR/ContentView.swift"; then
   exit 1
 fi
 
+if ! grep -q "SHIFT_TIMER" "$SOURCE_DIR/ContentView.swift"; then
+  echo "ERROR: Latest shift-timer Clock source was not downloaded." | tee -a "$LOG"
+  exit 1
+fi
+
 if grep -q "raw.githack.com" "$SOURCE_DIR/ContentView.swift"; then
   echo "ERROR: old raw.githack loader is still present." | tee -a "$LOG"
   exit 1
@@ -105,6 +110,8 @@ xcodebuild \
   -derivedDataPath "$BUILD_DIR" \
   -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
+  INFOPLIST_KEY_UIFileSharingEnabled=YES \
+  INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace=YES \
   "ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES=ClockItalicC ClockWordmark ClockChromeC" \
   ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS=YES \
   clean build 2>&1 | tee -a "$LOG"
