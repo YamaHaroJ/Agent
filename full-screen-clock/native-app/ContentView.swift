@@ -574,6 +574,21 @@ final class FullScreenClockViewController:
         notes.font = .systemFont(ofSize: 15, weight: .regular)
         notes.numberOfLines = 0
 
+        let editButton = UIButton(type: .system)
+        editButton.translatesAutoresizingMaskIntoConstraints = false
+        editButton.tintColor = .white
+        editButton.setImage(
+            UIImage(systemName: "pencil"),
+            for: .normal
+        )
+        editButton.accessibilityLabel = "Edit Shift"
+        editButton.addAction(
+            UIAction { [weak self] _ in
+                self?.promptToEditShift(record)
+            },
+            for: .touchUpInside
+        )
+
         let deleteButton = UIButton(type: .system)
         deleteButton.translatesAutoresizingMaskIntoConstraints = false
         deleteButton.tintColor = .systemRed
@@ -592,13 +607,14 @@ final class FullScreenClockViewController:
         card.addSubview(date)
         card.addSubview(time)
         card.addSubview(notes)
+        card.addSubview(editButton)
         card.addSubview(deleteButton)
 
         NSLayoutConstraint.activate([
             date.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
             date.topAnchor.constraint(equalTo: card.topAnchor, constant: 14),
             date.trailingAnchor.constraint(
-                lessThanOrEqualTo: deleteButton.leadingAnchor,
+                lessThanOrEqualTo: editButton.leadingAnchor,
                 constant: -8
             ),
 
@@ -606,6 +622,14 @@ final class FullScreenClockViewController:
             deleteButton.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
             deleteButton.widthAnchor.constraint(equalToConstant: 36),
             deleteButton.heightAnchor.constraint(equalToConstant: 36),
+
+            editButton.trailingAnchor.constraint(
+                equalTo: deleteButton.leadingAnchor,
+                constant: -2
+            ),
+            editButton.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            editButton.widthAnchor.constraint(equalToConstant: 36),
+            editButton.heightAnchor.constraint(equalToConstant: 36),
 
             time.leadingAnchor.constraint(equalTo: date.leadingAnchor),
             time.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
@@ -618,6 +642,150 @@ final class FullScreenClockViewController:
         ])
 
         return card
+    }
+
+    private func promptToEditShift(
+        _ record: ShiftRecord
+    ) {
+        guard let viewer = shiftLogViewer else {
+            return
+        }
+
+        let alert = UIAlertController(
+            title: "Edit Shift",
+            message: "Change the date, times, or notes.",
+            preferredStyle: .alert
+        )
+
+        alert.addTextField { field in
+            field.placeholder = "Date (10/5/2026)"
+            field.text = self.pastShiftDateFormatter.string(
+                from: record.start
+            )
+            field.keyboardType = .numbersAndPunctuation
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "Clock in (9:00 AM)"
+            field.text = self.shiftTimeFormatter.string(
+                from: record.start
+            )
+            field.autocapitalizationType = .allCharacters
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "Clock out (5:00 PM)"
+            field.text = self.shiftTimeFormatter.string(
+                from: record.end
+            )
+            field.autocapitalizationType = .allCharacters
+        }
+
+        alert.addTextField { field in
+            field.placeholder = "What did you do?"
+            field.text = record.notes
+            field.autocapitalizationType = .sentences
+        }
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Cancel",
+                style: .cancel
+            )
+        )
+
+        alert.addAction(
+            UIAlertAction(
+                title: "Save Changes",
+                style: .default
+            ) { [weak self, weak alert] _ in
+                guard
+                    let self,
+                    let fields = alert?.textFields,
+                    fields.count == 4
+                else {
+                    return
+                }
+
+                self.updateShift(
+                    record,
+                    dateText: fields[0].text ?? "",
+                    startText: fields[1].text ?? "",
+                    endText: fields[2].text ?? "",
+                    notes: fields[3].text ?? ""
+                )
+            }
+        )
+
+        viewer.present(alert, animated: true)
+    }
+
+    private func updateShift(
+        _ record: ShiftRecord,
+        dateText: String,
+        startText: String,
+        endText: String,
+        notes: String
+    ) {
+        let date = dateText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let startTime = startText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        let endTime = endText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.dateFormat = "M/d/yyyy h:mm a"
+
+        guard
+            let start = parser.date(from: "\(date) \(startTime)"),
+            let end = parser.date(from: "\(date) \(endTime)")
+        else {
+            showShiftLogError(
+                "Use a date like 10/5/2026 and times like 9:00 AM."
+            )
+            return
+        }
+
+        guard end > start else {
+            showShiftLogError(
+                "Clock Out must be later than Clock In."
+            )
+            return
+        }
+
+        let updated = ShiftRecord(
+            id: record.id,
+            start: start,
+            end: end,
+            workedSeconds: end.timeIntervalSince(start),
+            notes: notes.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+        )
+
+        do {
+            var records = try loadShiftRecords()
+
+            guard let index = records.firstIndex(
+                where: { $0.id == record.id }
+            ) else {
+                showShiftLogError(
+                    "That saved shift could not be found."
+                )
+                return
+            }
+
+            records[index] = updated
+            try saveShiftRecords(records)
+            refreshShiftLogViewer()
+        } catch {
+            showShiftLogError(error.localizedDescription)
+        }
     }
 
     private func confirmDeleteShift(
