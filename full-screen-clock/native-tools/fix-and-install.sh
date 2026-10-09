@@ -47,16 +47,32 @@ mkdir -p "$HOME/Library/Logs"
 
 if [[ "$REQUESTED_DEVICE" == "iphone" || "$REQUESTED_DEVICE" == "iPhone" ]]; then
   echo
-  echo "Connected Apple devices:"
-  xcrun devicectl list devices || true
-  echo
-  printf "Type the exact iPhone name shown above, then press Return: "
-  IFS= read -r DEVICE_NAME
+  echo "Looking for the connected iPhone..."
+
+  DEVICE_NAME=""
+
+  for candidate in "Jay’s iPhone" "Jay's iPhone" "iPhone"; do
+    if xcrun devicectl device info details --device "$candidate" >/dev/null 2>&1; then
+      DEVICE_NAME="$candidate"
+      break
+    fi
+  done
 
   if [[ -z "$DEVICE_NAME" ]]; then
-    echo "ERROR: No iPhone name entered."
+    echo
+    echo "Connected Apple devices:"
+    xcrun devicectl list devices || true
+    echo
+    printf "Type the exact iPhone name shown above, then press Return: "
+    IFS= read -r DEVICE_NAME
+  fi
+
+  if [[ -z "$DEVICE_NAME" ]]; then
+    echo "ERROR: Could not resolve the connected iPhone."
     exit 1
   fi
+
+  echo "Using iPhone: $DEVICE_NAME"
 fi
 
 echo "=== Clock native repair/install $(date) ===" | tee "$LOG"
