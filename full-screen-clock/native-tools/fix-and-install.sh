@@ -30,7 +30,8 @@ PROJECT_ROOT="$HOME/Documents/Clock"
 PROJECT="$PROJECT_ROOT/Clock.xcodeproj"
 SOURCE_DIR="$PROJECT_ROOT/Clock"
 BUILD_DIR="$HOME/Library/Caches/ClockNativeBuild"
-DEVICE_NAME="Jay’s iPad"
+REQUESTED_DEVICE="${1:-Jay’s iPad}"
+DEVICE_NAME="$REQUESTED_DEVICE"
 DEVICE_ID=""
 BUNDLE_ID="com.jayden.Clock"
 LOG="$HOME/Library/Logs/ClockNativeInstall.log"
@@ -44,7 +45,22 @@ ICON_MASTER_BASE="https://raw.githubusercontent.com/YamaHaroJ/Agent/main/full-sc
 
 mkdir -p "$HOME/Library/Logs"
 
+if [[ "$REQUESTED_DEVICE" == "iphone" || "$REQUESTED_DEVICE" == "iPhone" ]]; then
+  echo
+  echo "Connected Apple devices:"
+  xcrun devicectl list devices || true
+  echo
+  printf "Type the exact iPhone name shown above, then press Return: "
+  IFS= read -r DEVICE_NAME
+
+  if [[ -z "$DEVICE_NAME" ]]; then
+    echo "ERROR: No iPhone name entered."
+    exit 1
+  fi
+fi
+
 echo "=== Clock native repair/install $(date) ===" | tee "$LOG"
+echo "Target device: $DEVICE_NAME" | tee -a "$LOG"
 
 if [[ ! -d "$PROJECT" ]]; then
   echo "ERROR: Xcode project not found at $PROJECT" | tee -a "$LOG"
@@ -110,6 +126,7 @@ xcodebuild \
   -derivedDataPath "$BUILD_DIR" \
   -allowProvisioningUpdates \
   CODE_SIGN_STYLE=Automatic \
+  TARGETED_DEVICE_FAMILY="1,2" \
   INFOPLIST_KEY_UIFileSharingEnabled=YES \
   INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace=YES \
   "ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES=ClockItalicC ClockWordmark ClockChromeC" \
@@ -143,5 +160,5 @@ echo "6/6 Launching Clock..." | tee -a "$LOG"
 xcrun devicectl device process launch --device "$DEVICE_NAME" "$BUNDLE_ID" 2>&1 | tee -a "$LOG" || true
 
 echo
-echo "✅ Rebuilt Clock with background photos and 3 selectable app icons."
+echo "✅ Rebuilt and installed Clock on $DEVICE_NAME."
 echo "Log: $LOG"
