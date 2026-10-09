@@ -33,6 +33,7 @@ BUILD_DIR="$HOME/Library/Caches/ClockNativeBuild"
 REQUESTED_DEVICE="${1:-Jay’s iPad}"
 DEVICE_NAME="$REQUESTED_DEVICE"
 DEVICE_ID=""
+BUILD_DESTINATION="generic/platform=iOS"
 BUNDLE_ID="com.jayden.Clock"
 LOG="$HOME/Library/Logs/ClockNativeInstall.log"
 
@@ -73,6 +74,7 @@ if [[ "$REQUESTED_DEVICE" == "iphone" || "$REQUESTED_DEVICE" == "iPhone" ]]; the
   fi
 
   echo "Using iPhone: $DEVICE_NAME"
+  BUILD_DESTINATION="platform=iOS,name=$DEVICE_NAME"
 fi
 
 echo "=== Clock native repair/install $(date) ===" | tee "$LOG"
@@ -138,9 +140,10 @@ xcodebuild \
   -scheme Clock \
   -configuration Debug \
   -sdk iphoneos \
-  -destination "generic/platform=iOS" \
+  -destination "$BUILD_DESTINATION" \
   -derivedDataPath "$BUILD_DIR" \
   -allowProvisioningUpdates \
+  -allowProvisioningDeviceRegistration \
   CODE_SIGN_STYLE=Automatic \
   TARGETED_DEVICE_FAMILY="1,2" \
   INFOPLIST_KEY_UIFileSharingEnabled=YES \
