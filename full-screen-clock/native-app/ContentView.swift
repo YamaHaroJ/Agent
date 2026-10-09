@@ -2624,11 +2624,31 @@ final class FullScreenClockViewController:
     }
 
     private func setupMediaControls() {
+        let isPhone =
+            UIDevice.current.userInterfaceIdiom == .phone
+
+        let panelWidth: CGFloat = isPhone ? 250 : 340
+        let panelHeight: CGFloat = isPhone ? 88 : 126
+        let panelTopOffset: CGFloat = isPhone ? 105 : 125
+        let cornerRadius: CGFloat = isPhone ? 22 : 28
+
+        let rowWidth: CGFloat = isPhone ? 166 : 220
+        let rowHeight: CGFloat = isPhone ? 38 : 54
+        let rowTop: CGFloat = isPhone ? 7 : 10
+
+        let sideButtonSize: CGFloat = isPhone ? 36 : 50
+        let playButtonSize: CGFloat = isPhone ? 40 : 54
+        let rowSpacing: CGFloat = isPhone ? 22 : 34
+
+        let volumeTopSpacing: CGFloat = isPhone ? 3 : 10
+        let volumeWidth: CGFloat = isPhone ? 194 : 270
+        let volumeHeight: CGFloat = isPhone ? 28 : 40
+
         mediaControls = UIVisualEffectView(
             effect: UIBlurEffect(style: .systemThinMaterialDark)
         )
         mediaControls.translatesAutoresizingMaskIntoConstraints = false
-        mediaControls.layer.cornerRadius = 28
+        mediaControls.layer.cornerRadius = cornerRadius
         mediaControls.clipsToBounds = true
 
         previousButton = makeMediaButton(
@@ -2660,7 +2680,7 @@ final class FullScreenClockViewController:
         buttonRow.axis = .horizontal
         buttonRow.alignment = .center
         buttonRow.distribution = .equalCentering
-        buttonRow.spacing = 34
+        buttonRow.spacing = rowSpacing
 
         volumeView = MPVolumeView(frame: .zero)
         volumeView.translatesAutoresizingMaskIntoConstraints = false
@@ -2676,39 +2696,55 @@ final class FullScreenClockViewController:
             mediaControls.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             mediaControls.topAnchor.constraint(
                 equalTo: view.centerYAnchor,
-                constant: 125
+                constant: panelTopOffset
             ),
-            mediaControls.widthAnchor.constraint(equalToConstant: 340),
-            mediaControls.heightAnchor.constraint(equalToConstant: 126),
+            mediaControls.widthAnchor.constraint(equalToConstant: panelWidth),
+            mediaControls.heightAnchor.constraint(equalToConstant: panelHeight),
 
             buttonRow.topAnchor.constraint(
                 equalTo: mediaControls.contentView.topAnchor,
-                constant: 10
+                constant: rowTop
             ),
             buttonRow.centerXAnchor.constraint(
                 equalTo: mediaControls.contentView.centerXAnchor
             ),
-            buttonRow.widthAnchor.constraint(equalToConstant: 220),
-            buttonRow.heightAnchor.constraint(equalToConstant: 54),
+            buttonRow.widthAnchor.constraint(equalToConstant: rowWidth),
+            buttonRow.heightAnchor.constraint(equalToConstant: rowHeight),
 
-            previousButton.widthAnchor.constraint(equalToConstant: 50),
-            previousButton.heightAnchor.constraint(equalToConstant: 50),
+            previousButton.widthAnchor.constraint(
+                equalToConstant: sideButtonSize
+            ),
+            previousButton.heightAnchor.constraint(
+                equalToConstant: sideButtonSize
+            ),
 
-            playPauseButton.widthAnchor.constraint(equalToConstant: 54),
-            playPauseButton.heightAnchor.constraint(equalToConstant: 54),
+            playPauseButton.widthAnchor.constraint(
+                equalToConstant: playButtonSize
+            ),
+            playPauseButton.heightAnchor.constraint(
+                equalToConstant: playButtonSize
+            ),
 
-            nextButton.widthAnchor.constraint(equalToConstant: 50),
-            nextButton.heightAnchor.constraint(equalToConstant: 50),
+            nextButton.widthAnchor.constraint(
+                equalToConstant: sideButtonSize
+            ),
+            nextButton.heightAnchor.constraint(
+                equalToConstant: sideButtonSize
+            ),
 
             volumeView.topAnchor.constraint(
                 equalTo: buttonRow.bottomAnchor,
-                constant: 10
+                constant: volumeTopSpacing
             ),
             volumeView.centerXAnchor.constraint(
                 equalTo: mediaControls.contentView.centerXAnchor
             ),
-            volumeView.widthAnchor.constraint(equalToConstant: 270),
-            volumeView.heightAnchor.constraint(equalToConstant: 40)
+            volumeView.widthAnchor.constraint(
+                equalToConstant: volumeWidth
+            ),
+            volumeView.heightAnchor.constraint(
+                equalToConstant: volumeHeight
+            )
         ])
     }
 
@@ -2725,7 +2761,10 @@ final class FullScreenClockViewController:
             UIImage(
                 systemName: systemName,
                 withConfiguration: UIImage.SymbolConfiguration(
-                    pointSize: 28,
+                    pointSize:
+                        UIDevice.current.userInterfaceIdiom == .phone
+                        ? 20
+                        : 28,
                     weight: .semibold
                 )
             ),
@@ -2794,7 +2833,7 @@ final class FullScreenClockViewController:
         let alert = UIAlertController(
             title: "Media control unavailable",
             message:
-                "This iPad blocked direct control of the current media app. " +
+                "This device blocked direct control of the current media app. " +
                 "The volume slider will still work normally.",
             preferredStyle: .alert
         )
